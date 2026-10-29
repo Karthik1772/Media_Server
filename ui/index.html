@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0b10" />
+    <meta name="color-scheme" content="dark light" />
+    <title>__TITLE__</title>
+    <script>
+      /* set the theme before the first paint so light-theme users never see a dark flash */
+      (function () {
+        try {
+          var t = JSON.parse(localStorage.getItem("theme") || "null");
+          if (t !== "light" && t !== "dark")
+            t = matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="/__ui/style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="logo" href="/">&#9654; <b>Media</b></a>
+      <div class="search">
+        <span>&#128269;</span
+        ><input
+          id="q"
+          type="search"
+          placeholder="Search this folder   ( / )"
+          autocomplete="off"
+        />
+      </div>
+      <button
+        id="themeToggle"
+        class="theme-toggle"
+        type="button"
+        aria-label="Switch to light theme"
+        title="Toggle theme"
+      >
+        ☀️
+      </button>
+    </header>
+    <main class="wrap">
+      <nav id="crumbs" class="crumbs"></nav>
+      <div class="head">
+        <div>
+          <h1 id="title"></h1>
+          <div id="stats" class="stats"></div>
+        </div>
+        <div class="tools">
+          <select id="sort" title="Sort">
+            <option value="name">Name</option>
+            <option value="date">Newest</option>
+            <option value="size">Largest</option>
+          </select>
+          <div class="seg">
+            <button id="bgrid" title="Grid">&#9638;</button
+            ><button id="blist" title="List">&#9776;</button>
+          </div>
+        </div>
+      </div>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty" hidden>Nothing here.</div>
+    </main>
+
+    <div id="player" class="ov" hidden>
+      <div class="pbar">
+        <button class="btn" id="pclose">&#10005; Close</button>
+        <div class="t" id="ptitle"></div>
+        <button class="btn" id="pvlc" title="Open in VLC">VLC</button>
+        <a class="btn" id="pdl" download>&#11015;</a>
+      </div>
+      <video id="vid" controls playsinline></video>
+      <div id="perr" hidden></div>
+      <div class="pnav">
+        <button class="btn" id="pprev">&#9198; Prev</button>
+        <span id="pcount"></span>
+        <button class="btn" id="pnext">Next &#9197;</button>
+      </div>
+    </div>
+
+    <div id="viewer" class="ov" hidden>
+      <button class="btn" id="vclose">&#10005;</button>
+      <button class="arrow" id="vprev">&#8249;</button>
+      <img id="vimg" alt="" />
+      <button class="arrow" id="vnext">&#8250;</button>
+      <div id="vcap"></div>
+    </div>
+    <div id="toast" hidden></div>
+
+    <section
+      id="posterModal"
+      class="poster-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="posterHeading"
+      hidden
+    >
+      <div class="poster-dialog">
+        <div class="poster-dialog-head">
+          <div>
+            <h2 id="posterHeading">Change poster</h2>
+            <p id="posterFor" class="stats"></p>
+          </div>
+          <button
+            id="posterClose"
+            class="btn modal-close"
+            type="button"
+            aria-label="Close poster picker"
+          >
+            ✕
+          </button>
+        </div>
+        <form id="posterSearchForm" class="poster-search">
+          <input
+            id="posterQuery"
+            type="search"
+            placeholder="Search movie title"
+            autocomplete="off"
+          />
+          <input
+            id="posterYear"
+            type="number"
+            min="1900"
+            max="2100"
+            placeholder="Year"
+            aria-label="Release year (optional)"
+          />
+          <button class="action-btn" type="submit">Search posters</button>
+        </form>
+        <p id="posterHelp" class="poster-help">
+          Searches TMDB and Wikipedia. Pick the right poster, or upload your own
+          below. Your choice is saved permanently and the automatic scan will
+          never change it.
+        </p>
+        <div id="posterResults" class="poster-results"></div>
+        <div class="poster-upload">
+          <label for="posterFile"
+            >Or choose a local poster (JPG, PNG or WebP, max 5 MB)</label
+          >
+          <input
+            id="posterFile"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+          />
+          <button id="posterUploadBtn" class="action-btn" type="button">
+            Use selected image
+          </button>
+        </div>
+        <button id="posterReset" class="text-btn" type="button">
+          Reset to default poster
+        </button>
+      </div>
+    </section>
+
+    <script id="data" type="application/json">
+      __DATA__
+    </script>
+    <script src="/__ui/app.js" defer></script>
+  </body>
+</html>
