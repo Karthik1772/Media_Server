@@ -431,11 +431,18 @@ select,
 }
 
 .pbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 5;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
-    padding-top: calc(10px + env(safe-area-inset-top))
+    padding: 10px 12px 26px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+    background: linear-gradient(#000c, #0000);
+    transition: opacity .25s
 }
 
 .pbar .t {
@@ -469,26 +476,12 @@ select,
     cursor: default
 }
 
-#vid {
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-    background: #000
-}
-
-.pnav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    padding-bottom: calc(10px + env(safe-area-inset-bottom));
-    font-size: 13px;
-    color: #bbb
-}
-
 #perr {
-    margin: 0 14px 6px;
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    top: calc(64px + env(safe-area-inset-top));
+    z-index: 6;
     padding: 10px 14px;
     border-radius: 10px;
     background: #5b1220;
@@ -643,6 +636,7 @@ select:focus-visible {
 }
 
 .poster-search input,
+.poster-upload input[type="url"],
 .poster-upload input[type="file"] {
     min-width: 0;
     width: 100%;
@@ -806,24 +800,6 @@ select:focus-visible {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .pbar {
-        flex-wrap: wrap;
-    }
-
-    .pbar .t {
-        flex-basis: calc(100% - 100px);
-        order: 2;
-    }
-
-    #pvlc,
-    #pdl {
-        order: 3;
-    }
-
-    #vid {
-        max-height: calc(100dvh - 170px);
-    }
-
     .list .thumb {
         width: 100px;
     }
@@ -852,4 +828,547 @@ select:focus-visible {
 
 :root[data-theme="light"] .card:hover {
     box-shadow: 0 10px 28px rgba(20, 20, 40, .16);
+}
+
+/* ===== Photo viewer: "Original" button ===== */
+#vorig {
+    position: absolute;
+    top: calc(10px + env(safe-area-inset-top));
+    left: 12px;
+    z-index: 2
+}
+
+/* ===== Video player: our own controls ===== */
+.stage {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none
+}
+
+#vid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    object-fit: contain
+}
+
+#aud {
+    display: none
+}
+
+/* subtitles are drawn by app.js so size, colour and delay can be changed */
+#subs {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 7%;
+    z-index: 2;
+    padding: 0 6%;
+    text-align: center;
+    pointer-events: none;
+    font-size: calc(clamp(15px, 2.4vw, 30px) * var(--ss, 1));
+    line-height: 1.4;
+    color: var(--sc, #fff);
+    transition: bottom .2s
+}
+
+#subs span {
+    background: rgba(0, 0, 0, .62);
+    padding: .06em .45em;
+    border-radius: 6px;
+    text-shadow: 0 1px 2px #000;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone
+}
+
+#player:not(.idle):not(.locked) #subs {
+    bottom: calc(118px + env(safe-area-inset-bottom))
+}
+
+.pspin {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    pointer-events: none
+}
+
+.pspin i {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: 4px solid rgba(255, 255, 255, .25);
+    border-top-color: #fff;
+    animation: pspin .8s linear infinite
+}
+
+@keyframes pspin {
+    to {
+        transform: rotate(360deg)
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pspin i {
+        animation-duration: 2.4s
+    }
+}
+
+.ghud {
+    position: absolute;
+    left: 50%;
+    top: 40%;
+    transform: translate(-50%, -50%);
+    z-index: 4;
+    min-width: 128px;
+    padding: 14px 22px;
+    border-radius: 16px;
+    background: rgba(0, 0, 0, .74);
+    text-align: center;
+    pointer-events: none
+}
+
+.ghud b {
+    display: block;
+    font-size: 22px;
+    font-variant-numeric: tabular-nums
+}
+
+.ghud span {
+    display: block;
+    margin-top: 2px;
+    font-size: 13px;
+    color: #c9c9d6;
+    font-variant-numeric: tabular-nums
+}
+
+.ghud em {
+    display: block;
+    height: 4px;
+    margin-top: 10px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, .25);
+    overflow: hidden
+}
+
+.ghud em i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2))
+}
+
+.pchip {
+    position: absolute;
+    left: 50%;
+    top: calc(62px + env(safe-area-inset-top));
+    transform: translateX(-50%);
+    z-index: 6;
+    max-width: 90vw;
+    padding: 7px 15px;
+    border-radius: 99px;
+    background: rgba(0, 0, 0, .8);
+    font-size: 13px;
+    text-align: center
+}
+
+.pctrl {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    padding: 34px 14px calc(8px + env(safe-area-inset-bottom));
+    background: linear-gradient(#0000, #000d);
+    pointer-events: none;
+    transition: opacity .25s
+}
+
+.pctrl>* {
+    pointer-events: auto
+}
+
+.seekrow {
+    display: flex;
+    align-items: center;
+    gap: 10px
+}
+
+.tm {
+    min-width: 44px;
+    font-size: 12.5px;
+    color: #e6e6ef;
+    font-variant-numeric: tabular-nums
+}
+
+#ptime {
+    text-align: right
+}
+
+.seek {
+    --p: 0%;
+    --b: 0%;
+    position: relative;
+    flex: 1;
+    height: 30px;
+    cursor: pointer;
+    touch-action: none
+}
+
+.seek-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 4px;
+    margin-top: -2px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, .28);
+    overflow: hidden;
+    transition: height .12s, margin-top .12s
+}
+
+.seek:hover .seek-bar,
+.seek.drag .seek-bar {
+    height: 6px;
+    margin-top: -3px
+}
+
+.seek-buf,
+.seek-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    display: block
+}
+
+.seek-buf {
+    width: var(--b);
+    background: rgba(255, 255, 255, .38)
+}
+
+.seek-fill {
+    width: var(--p);
+    background: linear-gradient(90deg, var(--accent), var(--accent2))
+}
+
+.seek-knob {
+    position: absolute;
+    top: 50%;
+    left: var(--p);
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px #0009;
+    transform: scale(0);
+    transition: transform .12s
+}
+
+.seek:hover .seek-knob,
+.seek.drag .seek-knob,
+.seek:focus-visible .seek-knob {
+    transform: scale(1)
+}
+
+@media (pointer: coarse) {
+    .seek-knob {
+        transform: scale(1)
+    }
+}
+
+.seek-tip {
+    position: absolute;
+    bottom: 28px;
+    transform: translateX(-50%);
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, .88);
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none
+}
+
+.prow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px
+}
+
+.pgrp {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0
+}
+
+.pbtn {
+    flex: none;
+    width: 42px;
+    height: 42px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #fff;
+    font: inherit;
+    cursor: pointer
+}
+
+.pbtn svg {
+    width: 26px;
+    height: 26px;
+    fill: currentColor
+}
+
+.pbtn:hover {
+    background: rgba(255, 255, 255, .16)
+}
+
+.pbtn:disabled {
+    opacity: .3;
+    cursor: default;
+    background: none
+}
+
+.pbtn.on {
+    background: rgba(124, 92, 255, .55)
+}
+
+.pbtn.big {
+    width: 52px;
+    height: 52px;
+    margin: 0 6px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2))
+}
+
+.pbtn.big:hover {
+    filter: brightness(1.12)
+}
+
+.pbtn.big svg {
+    width: 30px;
+    height: 30px
+}
+
+.pbtn.txt {
+    width: auto;
+    min-width: 48px;
+    padding: 0 11px;
+    border-radius: 21px;
+    font-size: 14px;
+    font-weight: 600
+}
+
+.pcount {
+    padding: 0 8px;
+    font-size: 12px;
+    color: #c4c4d2;
+    white-space: nowrap
+}
+
+#pvol {
+    width: 86px;
+    accent-color: var(--accent2)
+}
+
+@media (pointer: coarse) {
+
+    #pvol,
+    #pmute {
+        display: none
+    }
+}
+
+/* controls fade away while a video plays; locked = only the unlock button */
+#player.idle {
+    cursor: none
+}
+
+#player.idle .pbar,
+#player.idle .pctrl {
+    opacity: 0;
+    pointer-events: none
+}
+
+#player.idle .pctrl>* {
+    pointer-events: none
+}
+
+#player.locked .pbar,
+#player.locked .pctrl,
+#player.locked .pmenu {
+    display: none
+}
+
+.pbtn.unlock {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    z-index: 9;
+    margin-top: -26px;
+    width: 52px;
+    height: 52px;
+    background: rgba(0, 0, 0, .75);
+    border: 1px solid rgba(255, 255, 255, .35)
+}
+
+.pmenu {
+    position: absolute;
+    right: 12px;
+    bottom: 120px;
+    z-index: 7;
+    width: min(340px, calc(100vw - 24px));
+    max-height: min(62vh, 520px);
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 14px;
+    background: rgba(18, 18, 26, .96);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 16px 50px rgba(0, 0, 0, .6);
+    color: #fff;
+    font-size: 14px
+}
+
+.mh {
+    padding: 10px 10px 4px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #a3a3b8
+}
+
+.mrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: 9px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer
+}
+
+.mrow:hover:not(:disabled) {
+    background: rgba(255, 255, 255, .1)
+}
+
+.mrow:disabled {
+    opacity: .45;
+    cursor: default
+}
+
+.mrow .chk {
+    flex: none;
+    width: 18px;
+    font-weight: 700;
+    color: var(--accent)
+}
+
+.mrow small {
+    margin-left: auto;
+    padding-left: 8px;
+    white-space: nowrap;
+    font-size: 12px;
+    color: #a3a3b8;
+    text-align: right
+}
+
+.mnote {
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #a3a3b8
+}
+
+.mstep {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px
+}
+
+.mstep div {
+    display: flex;
+    align-items: center;
+    gap: 6px
+}
+
+.mstep button {
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, .12);
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer
+}
+
+.mstep button:hover {
+    background: rgba(255, 255, 255, .22)
+}
+
+.mstep output {
+    min-width: 64px;
+    text-align: center;
+    font-variant-numeric: tabular-nums
+}
+
+.mswatches {
+    display: flex;
+    gap: 10px;
+    padding: 6px 10px 8px
+}
+
+.mswatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, .3);
+    cursor: pointer
+}
+
+.mswatch.on {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px var(--accent2)
+}
+
+@media (max-width: 640px) {
+    .prow {
+        flex-direction: column;
+        gap: 0
+    }
+
+    .pctrl {
+        padding-left: 8px;
+        padding-right: 8px
+    }
+
+    .pbtn {
+        width: 44px;
+        height: 44px
+    }
+}
+
+/* .heic the server can't convert yet */
+.thumb.heic-missing {
+    background: var(--panel2);
+    color: var(--mute)
 }

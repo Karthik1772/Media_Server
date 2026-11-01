@@ -9,7 +9,6 @@ Serves the folder you start it from, with:
 No extra packages needed (Python 3.8+).
 """
 
-import base64
 import html
 import http.server
 import io
@@ -26,7 +25,7 @@ from datetime import datetime
 from http import HTTPStatus
 from urllib.parse import quote, unquote
 
-import posters  # movie posters + Photos previews (posters.py, same folder)
+import posters  # every cache: posters, thumbnails, audio / subtitle tracks (posters.py)
 
 # Enable ANSI colors on Windows terminals (harmless elsewhere)
 os.system("")
@@ -68,9 +67,41 @@ POSTER_FOLDERS = (
 )  # videos in here get an official movie / show poster
 PREVIEW_FOLDERS = ("Photos",)  # videos in here get a preview frame ...
 PREVIEW_MAX_MB = 500  # ... but only up to this size; bigger ones show the default image
-# Optional, free: create a key at https://www.themoviedb.org/settings/api and paste it
-# here (or set the TMDB_API_KEY environment variable). Without it, Wikipedia is used.
-TMDB_API_KEY = "6140596efd63fb51e557bd43205cbf88"
+# Extra audio languages the player extracts are cached (audio_track_cache); the oldest are
+# deleted when the folder grows beyond this many GB.
+AUDIO_CACHE_MAX_GB = 5
+
+
+def load_env(path):
+    """Tiny .env reader (KEY=value lines, # comments, optional quotes) - no packages needed.
+    Variables already set in the real environment win over the file."""
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        if name.lower().startswith("export "):
+            name = name[7:].strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].strip()
+        if name:
+            os.environ.setdefault(name, value)
+
+
+load_env(os.path.join(BASE_DIR, ".env"))
+# Optional, free: create a key at https://www.themoviedb.org/settings/api and put it in the
+# .env file next to server.py:   TMDB_API_KEY=your_key_here
+# Without it, Wikipedia is used for posters.
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 
 # Folder that gets shared. By default it is the folder ABOVE this one, so with
 # E:\Media Server\server.py you share E:\  (Films, Web Series, photos ...).
@@ -85,6 +116,12 @@ HIDDEN = {
     "found.000",
     "poster_cache",
     "thumb_cache",
+    "films_thumbnails",
+    "short_video_thumbnails",
+    "photo_thumbnails",
+    "photo_previews",
+    "subtitle_cache",
+    "audio_track_cache",
 }
 
 print_lock = threading.Lock()
@@ -200,6 +237,10 @@ def banner(ip):
 # Request handler
 # --------------------------------------------------------------------------
 class Handler(http.server.SimpleHTTPRequestHandler):
+    # HTTP/1.1 keep-alive: a page with 100 thumbnails reuses one connection instead of
+    # opening 100 (every response below sends a Content-Length, which keep-alive needs).
+    protocol_version = "HTTP/1.1"
+
     extensions_map = {
         **http.server.SimpleHTTPRequestHandler.extensions_map,
         ".mkv": "video/webm",
@@ -213,6 +254,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".3gp": "video/3gpp",
         ".webp": "image/webp",
         ".avif": "image/avif",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
         ".png": "image/png",
         ".gif": "image/gif",
         ".svg": "image/svg+xml",
@@ -234,12 +277,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 x for x in p[len(UI_PREFIX) :].split("/") if x not in ("", ".", "..")
             ]
             return os.path.join(UI_DIR, *rel)
-        if p.startswith(posters.POSTER_PREFIX):
-            name = os.path.basename(p[len(posters.POSTER_PREFIX) :])
-            return os.path.join(posters.POSTER_DIR, name)
-        if p.startswith(posters.THUMB_PREFIX):
-            name = os.path.basename(p[len(posters.THUMB_PREFIX) :])
-            return os.path.join(posters.THUMB_DIR, name)
+        cached = posters.cache_path(p)  # /__film/, /__short/, /__photo/, /__audio/ ...
+        if cached:
+            return cached
         return super().translate_path(path)
 
     def send_header(self, keyword, value):
@@ -260,8 +300,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header(
                 "Cache-Control", "public, max-age=86400"
             )  # static images: a day
-        elif ok and rp.startswith((posters.POSTER_PREFIX, posters.THUMB_PREFIX)):
-            # file names contain a hash of the picture, so a new picture = a new URL
+        elif ok and rp.startswith(posters.CACHE_PREFIXES):
+            # file names contain a hash of the picture / size / date, so a new file = a new URL
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         elif rp.startswith(UI_PREFIX):
             self.send_header("Cache-Control", "no-cache")  # edits show up on refresh
@@ -445,9 +485,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "count": count,
                 "url": quote(n) + ("/" if isdir else ""),
             }
-            if kind == "video":
+            if kind in ("video", "image"):
                 key = os.path.relpath(full, os.getcwd()).replace(os.sep, "/")
-                item.update(posters.describe_video(key, n, st.st_size, st.st_mtime))
+                if kind == "video":
+                    item.update(posters.describe_video(key, n, st.st_size, st.st_mtime))
+                else:  # thumbnail + viewer copy (the original is used if there is none)
+                    item.update(posters.describe_image(key, n, st.st_size, st.st_mtime))
             items.append(item)
 
         data = json.dumps({"path": self.req_path, "items": items}, ensure_ascii=False)
@@ -464,15 +507,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return io.BytesIO(payload)
 
-    # ---------- poster + preview API ----------
-    def _json_response(self, payload, status=200):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    # ---------- cache / player API ----------
+    def _send_bytes(self, body, ctype, cache="no-store", status=200):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
+
+    def _json_response(self, payload, status=200):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self._send_bytes(body, "application/json; charset=utf-8", status=status)
 
     def _read_body(self, limit):
         try:
@@ -485,48 +533,86 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
         return self.rfile.read(length)
 
+    def _api_start(self, parsed):
+        # handlers are reused on a keep-alive connection: forget the previous request
+        self.quiet = True
+        self.req_path = parsed.path
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/__api/poster-search":
-            q = urllib.parse.parse_qs(parsed.query)
+        if not parsed.path.startswith("/__api/"):
+            return super().do_GET()
+        self._api_start(parsed)
+        q = urllib.parse.parse_qs(parsed.query)
 
-            def first(name):
-                return (q.get(name) or [""])[0].strip()
+        def arg(name):
+            return (q.get(name) or [""])[0].strip()
 
-            try:
-                results = posters.poster_candidates(
-                    first("q")[:160], first("year")[:4], first("kind")
+        try:
+            if parsed.path == "/__api/poster-search":
+                try:
+                    results = posters.poster_candidates(
+                        arg("q")[:160], arg("year")[:4], arg("kind")
+                    )
+                except posters.FetchError:
+                    return self._json_response(
+                        {
+                            "error": "Couldn't reach the poster sources - check this PC's internet connection"
+                        },
+                        502,
+                    )
+                return self._json_response({"results": results})
+            if (
+                parsed.path == "/__api/photo-thumb"
+            ):  # made on the first request, then cached
+                try:
+                    file_path = posters.photo_file(
+                        posters.safe_key(arg("key")), arg("k")
+                    )
+                    with open(file_path, "rb") as fh:
+                        data = fh.read()
+                except (ValueError, OSError) as exc:
+                    return self._json_response({"error": str(exc)}, 404)
+                ctype = "image/webp" if file_path.endswith(".webp") else "image/jpeg"
+                return self._send_bytes(
+                    data, ctype, "public, max-age=31536000, immutable"
                 )
-            except posters.FetchError:
+            if parsed.path == "/__api/tracks":  # audio + subtitle tracks of a video
                 return self._json_response(
-                    {
-                        "error": "Couldn't reach the poster sources - check this PC's internet connection"
-                    },
-                    502,
+                    posters.tracks_info(posters.safe_key(arg("key")))
                 )
-            return self._json_response({"results": results})
-        return super().do_GET()
+            if parsed.path == "/__api/subtitle":  # one subtitle as WebVTT
+                vtt = posters.subtitle_vtt(posters.safe_key(arg("key")), arg("id"))
+                return self._send_bytes(
+                    vtt.encode("utf-8"),
+                    "text/vtt; charset=utf-8",
+                    "public, max-age=3600",
+                )
+            if parsed.path == "/__api/audio-prepare":  # extract an audio language once
+                try:
+                    track = int(arg("a"))
+                except ValueError:
+                    raise ValueError("Bad audio track.") from None
+                return self._json_response(
+                    posters.audio_prepare(posters.safe_key(arg("key")), track)
+                )
+        except (ValueError, OSError) as exc:
+            return self._json_response({"error": str(exc)}, 400)
+        except Exception as exc:  # a bug must not drop the connection silently
+            return self._json_response({"error": f"Server error: {exc}"}, 500)
+        return self._json_response({"error": "Not found"}, 404)
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        self._api_start(parsed)
         try:
             if parsed.path == "/__api/poster-select":
-                data = json.loads(self._read_body(8 * 1024 * 1024).decode("utf-8"))
-                action = data.get("action")
-                raw = None
-                if action == "upload":
-                    m = re.fullmatch(
-                        r"data:image/(?:jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)",
-                        str(data.get("data_url", "")),
-                    )
-                    if not m:
-                        raise ValueError("Choose a JPG, PNG or WebP image.")
-                    raw = base64.b64decode(m.group(1), validate=True)
+                data = json.loads(self._read_body(64 * 1024).decode("utf-8"))
                 url = posters.poster_apply(
-                    action,
+                    data.get("action"),
                     posters.safe_key(data.get("video_key")),
                     candidate_id=str(data.get("candidate_id", "")),
-                    raw=raw,
+                    link=str(data.get("link", ""))[:600],
                     title=str(data.get("title", ""))[:160],
                 )
                 return self._json_response({"ok": True, "poster": url})
@@ -539,7 +625,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 url = posters.save_browser_thumb(key, self._read_body(1_000_000))
                 return self._json_response({"ok": True, "poster": url})
         except (ValueError, OSError) as exc:
+            self.close_connection = True  # the request body may be unread
             return self._json_response({"error": str(exc)}, 400)
+        self.close_connection = True
         return self._json_response({"error": "Not found"}, 404)
 
     # ---------- request handling ----------
@@ -548,9 +636,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.emit()
 
     def is_program_file(self):
-        if self.req_path.startswith(
-            (UI_PREFIX, posters.POSTER_PREFIX, posters.THUMB_PREFIX)
-        ):
+        if self.req_path.startswith((UI_PREFIX,) + posters.CACHE_PREFIXES):
             return False  # these prefixes map to the few files the page really needs
         p = os.path.normcase(os.path.abspath(self.fs_path))
         b = os.path.normcase(BASE_DIR)
@@ -570,7 +656,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.req_path = unquote(self.path.split("?")[0])
         self.fs_path = self.translate_path(self.path)
         self.quiet = self.req_path.startswith(
-            (UI_PREFIX, posters.POSTER_PREFIX, posters.THUMB_PREFIX)
+            (UI_PREFIX,) + posters.CACHE_PREFIXES
         ) or self.req_path.endswith("favicon.ico")
         rng = self.headers.get("Range")
         if LOG_LIFECYCLE and not self.quiet:
@@ -743,6 +829,7 @@ def init_runtime(root):
         preview_folders=PREVIEW_FOLDERS,
         preview_max_mb=PREVIEW_MAX_MB,
         tmdb_key=TMDB_API_KEY,
+        audio_cache_max_gb=AUDIO_CACHE_MAX_GB,
         log_fn=poster_log,
     )
 

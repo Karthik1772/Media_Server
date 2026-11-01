@@ -70,23 +70,142 @@
     </main>
 
     <div id="player" class="ov" hidden>
+      <div id="stage" class="stage">
+        <video id="vid" playsinline></video>
+        <audio id="aud" preload="auto"></audio>
+        <div id="subs"></div>
+        <div id="pspin" class="pspin" hidden><i></i></div>
+        <div id="ghud" class="ghud" hidden></div>
+      </div>
       <div class="pbar">
         <button class="btn" id="pclose">&#10005; Close</button>
         <div class="t" id="ptitle"></div>
         <button class="btn" id="pvlc" title="Open in VLC">VLC</button>
         <a class="btn" id="pdl" download>&#11015;</a>
       </div>
-      <video id="vid" controls playsinline></video>
+      <div id="pchip" class="pchip" hidden></div>
       <div id="perr" hidden></div>
-      <div class="pnav">
-        <button class="btn" id="pprev">&#9198; Prev</button>
-        <span id="pcount"></span>
-        <button class="btn" id="pnext">Next &#9197;</button>
+      <div id="pctrl" class="pctrl">
+        <div class="seekrow">
+          <span id="ptime" class="tm">0:00</span>
+          <div
+            id="pseek"
+            class="seek"
+            role="slider"
+            aria-label="Seek"
+            tabindex="0"
+          >
+            <div class="seek-bar">
+              <i class="seek-buf"></i><i class="seek-fill"></i>
+            </div>
+            <i class="seek-knob"></i>
+            <span class="seek-tip" hidden></span>
+          </div>
+          <span id="pdur" class="tm">0:00</span>
+        </div>
+        <div class="prow">
+          <div class="pgrp">
+            <button
+              class="pbtn"
+              id="pprev"
+              title="Previous (P)"
+              aria-label="Previous"
+            ></button>
+            <button
+              class="pbtn"
+              id="pback"
+              title="Back 10 s (&larr;)"
+              aria-label="Back 10 seconds"
+            ></button>
+            <button
+              class="pbtn big"
+              id="pplay"
+              title="Play / pause (Space)"
+              aria-label="Play"
+            ></button>
+            <button
+              class="pbtn"
+              id="pfwd"
+              title="Forward 10 s (&rarr;)"
+              aria-label="Forward 10 seconds"
+            ></button>
+            <button
+              class="pbtn"
+              id="pnext"
+              title="Next (N)"
+              aria-label="Next"
+            ></button>
+            <span id="pcount" class="pcount"></span>
+            <button
+              class="pbtn"
+              id="pmute"
+              title="Mute (M)"
+              aria-label="Mute"
+            ></button>
+            <input
+              id="pvol"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value="1"
+              aria-label="Volume"
+            />
+          </div>
+          <div class="pgrp">
+            <button
+              class="pbtn txt"
+              id="pspeed"
+              title="Playback speed ( &lt; / &gt; )"
+            >
+              1&times;
+            </button>
+            <button
+              class="pbtn"
+              id="ptracks"
+              title="Audio &amp; subtitles (C)"
+              aria-label="Audio and subtitles"
+            ></button>
+            <button
+              class="pbtn"
+              id="pfit"
+              title="Picture: fit / fill / stretch"
+              aria-label="Picture fit"
+            ></button>
+            <button
+              class="pbtn"
+              id="ppip"
+              title="Picture in picture"
+              aria-label="Picture in picture"
+              hidden
+            ></button>
+            <button
+              class="pbtn"
+              id="plock"
+              title="Lock controls"
+              aria-label="Lock controls"
+            ></button>
+            <button
+              class="pbtn"
+              id="pfs"
+              title="Fullscreen (F)"
+              aria-label="Fullscreen"
+            ></button>
+          </div>
+        </div>
       </div>
+      <div id="pmenu" class="pmenu" hidden></div>
+      <button
+        class="pbtn unlock"
+        id="punlock"
+        aria-label="Unlock controls"
+        hidden
+      ></button>
     </div>
 
     <div id="viewer" class="ov" hidden>
       <button class="btn" id="vclose">&#10005;</button>
+      <button class="btn" id="vorig" hidden>Original</button>
       <button class="arrow" id="vprev">&#8249;</button>
       <img id="vimg" alt="" />
       <button class="arrow" id="vnext">&#8250;</button>
@@ -135,24 +254,27 @@
           <button class="action-btn" type="submit">Search posters</button>
         </form>
         <p id="posterHelp" class="poster-help">
-          Searches TMDB and Wikipedia. Pick the right poster, or upload your own
+          Searches TMDB and Wikipedia. Pick the right poster, or paste a link
           below. Your choice is saved permanently and the automatic scan will
           never change it.
         </p>
         <div id="posterResults" class="poster-results"></div>
-        <div class="poster-upload">
-          <label for="posterFile"
-            >Or choose a local poster (JPG, PNG or WebP, max 5 MB)</label
+        <form id="posterLinkForm" class="poster-upload">
+          <label for="posterLink"
+            >Or paste a link: a TMDB movie / TV page, a Wikipedia page, or an
+            image link from image.tmdb.org / upload.wikimedia.org</label
           >
           <input
-            id="posterFile"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
+            id="posterLink"
+            type="url"
+            inputmode="url"
+            placeholder="https://www.themoviedb.org/movie/…"
+            autocomplete="off"
           />
-          <button id="posterUploadBtn" class="action-btn" type="button">
-            Use selected image
+          <button id="posterLinkBtn" class="action-btn" type="submit">
+            Use this link
           </button>
-        </div>
+        </form>
         <button id="posterReset" class="text-btn" type="button">
           Reset to default poster
         </button>
