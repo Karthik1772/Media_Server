@@ -473,6 +473,13 @@
     const frag = document.createDocumentFragment();
 
     items.forEach((it, n) => {
+      // folders and files never share a row: poster cards are much taller than
+      // folder cards, so a mixed row would stretch the folders into empty boxes
+      if (n && !it.dir && items[n - 1].dir) {
+        const br = document.createElement("div");
+        br.className = "grid-break";
+        frag.appendChild(br);
+      }
       const c = card(it);
       c.style.animationDelay = Math.min(n, 14) * 35 + "ms";
       frag.appendChild(c);
@@ -1175,9 +1182,8 @@
   }
 
   /* ----- play state events + audio sync ----- */
-  const spin = (on, text, intro) => {
+  const spin = (on, text) => {
     $("#pspin").hidden = !on;
-    $("#pspin").classList.toggle("intro", !!intro); // logo shows only while opening a title
     if (on) $("#pspinTxt").textContent = text || "";
   };
 
@@ -2044,7 +2050,7 @@
     paintSeek(0);
     paintBuf();
     $("#pdur").textContent = "0:00";
-    spin(true, "Loading movie…", true);
+    spin(true, "Loading movie…");
     restoreLocalSubs(it);
     wake();
 
