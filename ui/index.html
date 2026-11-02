@@ -43,17 +43,23 @@
           sessionStorage.setItem("splashSeen", "1");
         } catch (e) {}
         if (seen || location.pathname !== "/") return el.remove();
+        document.documentElement.classList.add("has-splash");
         var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-        setTimeout(function () {
-          el.classList.add("out");
-          setTimeout(function () { el.remove(); }, 600);
-        }, reduce ? 500 : 1900);
+        setTimeout(
+          function () {
+            el.classList.add("out");
+            setTimeout(function () {
+              el.remove();
+            }, 600);
+          },
+          reduce ? 500 : 1900,
+        );
       })();
     </script>
     <header class="top">
       <a class="logo" href="/">
-      <img class="logo-img" src="/__ui/assets/Favicon.png" alt="" />
-      <b>__APPNAME__</b>
+        <img class="logo-img" src="/__ui/assets/Favicon.png" alt="" />
+        <b>__APPNAME__</b>
       </a>
       <div class="search">
         <span>&#128269;</span
@@ -102,8 +108,13 @@
         <video id="vid" playsinline></video>
         <audio id="aud" preload="auto"></audio>
         <div id="subs"></div>
-        <div id="pspin" class="pspin" hidden><i></i><span id="pspinTxt"></span></div>
+        <div id="pspin" class="pspin" hidden>
+          <i></i><span id="pspinTxt"></span>
+        </div>
         <div id="ghud" class="ghud" hidden></div>
+        <div id="pfx" class="pfx" hidden></div>
+        <div id="skipL" class="skipfx l" hidden></div>
+        <div id="skipR" class="skipfx r" hidden></div>
       </div>
       <div class="pbar">
         <button class="btn" id="pclose">&#10005; Close</button>
@@ -121,6 +132,24 @@
         accept=".srt,.vtt,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream"
         hidden
       />
+      <div id="presume" class="presume" hidden>
+        <span id="presumeTxt"></span>
+        <button id="presumeBtn" type="button">Start over</button>
+      </div>
+      <div id="pnextup" class="pnextup" hidden>
+        <div class="nu-ring">
+          <svg viewBox="0 0 44 44">
+            <circle class="bg" cx="22" cy="22" r="18" />
+            <circle class="fg" cx="22" cy="22" r="18" />
+          </svg>
+          <b id="nuNum">5</b>
+        </div>
+        <div class="nu-t"><small>Up next</small><span id="nuTitle"></span></div>
+        <button id="nuPlay" type="button" class="nu-go">Play now</button>
+        <button id="nuCancel" type="button" class="nu-x" aria-label="Cancel">
+          &#10005;
+        </button>
+      </div>
       <div id="perr" hidden></div>
       <div id="pctrl" class="pctrl">
         <div class="seekrow">
@@ -291,9 +320,9 @@
           <button class="action-btn" type="submit">Search posters</button>
         </form>
         <p id="posterHelp" class="poster-help">
-          Searches TMDB (posters come from media.themoviedb.org) and Wikipedia. Pick
-          the right poster, or paste a link below. Your choice is saved permanently and the automatic scan will
-          never change it.
+          Searches TMDB (posters come from media.themoviedb.org) and Wikipedia.
+          Pick the right poster, or paste a link below. Your choice is saved
+          permanently and the automatic scan will never change it.
         </p>
         <div id="posterResults" class="poster-results"></div>
         <form id="posterLinkForm" class="poster-upload">

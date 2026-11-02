@@ -130,10 +130,44 @@
 
   if (themeToggle) {
     themeToggle.addEventListener("click", () => {
-      applyTheme(
-        document.documentElement.dataset.theme === "dark" ? "light" : "dark",
-        true,
+      const next =
+        document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      themeToggle.classList.remove("spin");
+      void themeToggle.offsetWidth;
+      themeToggle.classList.add("spin");
+      if (reducedMotion()) return applyTheme(next, true);
+      if (!document.startViewTransition) {
+        // older browsers: colours fade instead of the wipe
+        const root = document.documentElement;
+        root.classList.add("theme-anim");
+        applyTheme(next, true);
+        return setTimeout(() => root.classList.remove("theme-anim"), 500);
+      }
+      const r = themeToggle.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const rad = Math.hypot(
+        Math.max(x, innerWidth - x),
+        Math.max(y, innerHeight - y),
       );
+      const vt = document.startViewTransition(() => applyTheme(next, true));
+      vt.ready
+        .then(() =>
+          document.documentElement.animate(
+            {
+              clipPath: [
+                `circle(0px at ${x}px ${y}px)`,
+                `circle(${rad}px at ${x}px ${y}px)`,
+              ],
+            },
+            {
+              duration: 600,
+              easing: "ease-in-out",
+              pseudoElement: "::view-transition-new(root)",
+            },
+          ),
+        )
+        .catch(() => {});
     });
   }
 
@@ -151,13 +185,151 @@
   function toast(msg) {
     const t = $("#toast");
     t.textContent = msg;
+    t.classList.remove("hide");
     t.hidden = false;
+    t.style.animation = "none"; // restart the entrance
+    void t.offsetWidth;
+    t.style.animation = "";
 
     clearTimeout(toastT);
     toastT = setTimeout(() => {
-      t.hidden = true;
+      t.classList.add("hide");
+      toastT = setTimeout(() => {
+        t.hidden = true;
+        t.classList.remove("hide");
+      }, 260);
     }, 3200);
   }
+
+  /* ---------- Motion helpers ---------- */
+
+  const reducedMotion = () =>
+    matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // the tab icon spins while anything is loading (opening a folder, audio, subtitles…)
+  const busyKeys = new Set();
+  const fav = {
+    link: document.querySelector('link[rel~="icon"]'),
+    img: null,
+    orig: "",
+    timer: 0,
+    a: 0,
+  };
+
+  // load the icon up front so the first pulse is instant
+  if (fav.link) {
+    fav.orig = fav.link.href;
+    fav.img = new Image();
+    fav.img.src = fav.orig;
+  }
+
+  function setBusy(key, on) {
+    if (on) busyKeys.add(key);
+    else busyKeys.delete(key);
+    if (busyKeys.size) favStart();
+    else favStop();
+  }
+
+  function favStart() {
+    if (fav.timer || !fav.link || reducedMotion()) return;
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = 64;
+    const cx = cv.getContext("2d");
+    fav.timer = setInterval(() => {
+      if (!fav.img.complete || !fav.img.naturalWidth) return;
+      fav.a += 0.32;
+      const size = 38 + Math.sin(fav.a * 1.4) * 3;
+      cx.clearRect(0, 0, 64, 64);
+      cx.drawImage(fav.img, 32 - size / 2, 32 - size / 2, size, size);
+      cx.lineWidth = 5;
+      cx.lineCap = "round";
+      cx.strokeStyle = "#a78bfa";
+      cx.beginPath();
+      cx.arc(32, 32, 28, fav.a, fav.a + Math.PI * 1.2);
+      cx.stroke();
+      try {
+        fav.link.href = cv.toDataURL("image/png");
+      } catch {}
+    }, 90);
+  }
+
+  function favStop() {
+    clearInterval(fav.timer);
+    fav.timer = 0;
+    if (fav.link && fav.orig) fav.link.href = fav.orig;
+  }
+
+  // soft press-ripple on buttons
+  addEventListener("pointerdown", (e) => {
+    if (reducedMotion() || !e.target.closest) return;
+    const b = e.target.closest(
+      ".btn, .pbtn, .theme-toggle, .seg button, .mrow, .action-btn, .nu-go",
+    );
+    if (!b || b.disabled) return;
+    const r = b.getBoundingClientRect();
+    if (getComputedStyle(b).position === "static")
+      b.style.position = "relative";
+    b.style.overflow = "hidden";
+    const d = Math.max(r.width, r.height) * 2;
+    const rip = document.createElement("span");
+    rip.className = "rip";
+    rip.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
+    b.appendChild(rip);
+    setTimeout(() => rip.remove(), 600);
+  });
+
+  // opening a folder: the cards fade away and placeholders show while the next page loads
+  function leaveTo(href) {
+    setBusy("nav", true);
+    const g = $("#grid");
+    g.classList.add("leaving");
+    setTimeout(() => {
+      g.className = "grid" + (state.view === "list" ? " list" : "");
+      g.innerHTML = Array(12)
+        .fill(
+          '<div class="card skel"><div class="thumb"></div><div class="info"><b></b><b></b></div></div>',
+        )
+        .join("");
+      $("#empty").hidden = true;
+      location.href = href;
+    }, 170);
+  }
+
+  document.addEventListener("click", (e) => {
+    if (
+      e.defaultPrevented ||
+      e.button ||
+      e.ctrlKey ||
+      e.metaKey ||
+      e.shiftKey ||
+      e.altKey
+    )
+      return;
+    const a = e.target.closest && e.target.closest("a[href]");
+    if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+    if (reducedMotion()) return;
+    if (!$("#player").hidden || !$("#viewer").hidden) return;
+    const u = new URL(a.href, location.href);
+    if (u.origin !== location.origin) return;
+    if (u.pathname === location.pathname && u.search === location.search)
+      return;
+    // cards: only folders; files open in the player or download as usual
+    if (
+      a.classList.contains("card") &&
+      !D.items.some((i) => i.dir && i.url === a.getAttribute("href"))
+    )
+      return;
+    e.preventDefault();
+    leaveTo(a.href);
+  });
+
+  // coming back with the browser's Back button must not show the placeholders
+  addEventListener("pageshow", (e) => {
+    if (!e.persisted) return;
+    setBusy("nav", false);
+    $("#grid").classList.remove("leaving");
+    render();
+  });
 
   /* ---------- Header and breadcrumbs ---------- */
 
@@ -397,6 +569,7 @@
       th = `
         <div class="thumb video scope-${scope}">
           ${art}
+          <i class="playfx"></i>
           <span class="badge">${esc(ext(it))}</span>
           ${p ? `<div class="prog"><i style="width:${p}%"></i></div>` : ""}
           ${
@@ -413,6 +586,7 @@
     } else if (it.kind === "audio") {
       th = `
         <div class="thumb audio">
+          <i class="playfx"></i>
           <span class="ico">&#127925;</span>
           <span class="badge">${esc(ext(it))}</span>
         </div>`;
@@ -457,8 +631,41 @@
     return a;
   }
 
+  // cards slide to their new place when the search, sort or layout changes;
+  // new ones pop in, removed ones shrink away; cards below the fold appear as you scroll
+  let renderedOnce = false;
+  let flashHref = "";
+  const revealObserver =
+    "IntersectionObserver" in window
+      ? new IntersectionObserver(
+          (entries) => {
+            let n = 0;
+            entries.forEach((en) => {
+              if (!en.isIntersecting) return;
+              const c = en.target;
+              revealObserver.unobserve(c);
+              c.style.setProperty("--d", Math.min(n++, 12) * 40 + "ms");
+              c.classList.remove("pre");
+              c.classList.add("in");
+            });
+          },
+          { rootMargin: "0px 0px -4% 0px", threshold: 0.04 },
+        )
+      : null;
+
   function render() {
     const g = $("#grid");
+
+    const prev = new Map();
+    if (renderedOnce && !reducedMotion()) {
+      g.querySelectorAll(".card").forEach((c) =>
+        prev.set(c.getAttribute("href"), {
+          r: c.getBoundingClientRect(),
+          el: c,
+        }),
+      );
+    }
+    renderedOnce = true;
 
     g.innerHTML = "";
     const hasPosters = D.items.some(
@@ -481,16 +688,113 @@
         frag.appendChild(br);
       }
       const c = card(it);
-      c.style.animationDelay = Math.min(n, 14) * 35 + "ms";
+      c.classList.add("pre");
       frag.appendChild(c);
     });
     g.appendChild(frag);
     items.forEach(queueCapture);
 
+    const seen = new Set();
+    g.querySelectorAll(".card").forEach((c) => {
+      const key = c.getAttribute("href");
+      seen.add(key);
+      const p = prev.get(key);
+      if (p) {
+        // same card as before: glide from the old spot
+        c.classList.remove("pre");
+        c.classList.add("in", "noanim");
+        const r = c.getBoundingClientRect();
+        const dx = p.r.left - r.left;
+        const dy = p.r.top - r.top;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+          c.animate(
+            [
+              { transform: `translate(${dx}px, ${dy}px)`, opacity: 0.75 },
+              { transform: "none", opacity: 1 },
+            ],
+            { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" },
+          );
+        }
+        // poster changed: the old one stays underneath until the new one has faded in
+        const oldImg = p.el.querySelector(".poster-img");
+        const newImg = c.querySelector(".poster-img");
+        if (
+          oldImg &&
+          newImg &&
+          oldImg.getAttribute("src") !== newImg.getAttribute("src")
+        ) {
+          const ghost = oldImg.cloneNode();
+          ghost.removeAttribute("onload");
+          ghost.removeAttribute("onerror");
+          ghost.classList.add("ld");
+          newImg.before(ghost);
+          const drop = () => setTimeout(() => ghost.remove(), 450);
+          if (newImg.complete && newImg.naturalWidth) drop();
+          else {
+            newImg.addEventListener("load", drop, { once: true });
+            newImg.addEventListener("error", () => ghost.remove(), {
+              once: true,
+            });
+          }
+        }
+      } else if (prev.size) {
+        // appeared because of a search / sort / view change
+        c.classList.remove("pre");
+        c.classList.add("in");
+      } else if (revealObserver) {
+        revealObserver.observe(c);
+      } else {
+        c.classList.remove("pre");
+        c.classList.add("in");
+      }
+    });
+
+    // cards that left: shrink and fade where they were
+    let ghosts = 0;
+    prev.forEach((p, key) => {
+      if (seen.has(key) || ghosts >= 40) return;
+      if (p.r.bottom < 0 || p.r.top > innerHeight) return;
+      ghosts++;
+      const gh = p.el.cloneNode(true);
+      gh.className = "card ghost";
+      gh.style.cssText = `position:fixed;left:${p.r.left}px;top:${p.r.top}px;width:${p.r.width}px;height:${p.r.height}px;margin:0;pointer-events:none;z-index:5`;
+      document.body.appendChild(gh);
+      gh.animate(
+        [
+          { opacity: 1, transform: "scale(1)" },
+          { opacity: 0, transform: "scale(.86)" },
+        ],
+        { duration: 260, easing: "ease-in", fill: "forwards" },
+      ).onfinish = () => gh.remove();
+    });
+
+    // a poster was just changed: flash that card
+    if (flashHref) {
+      const fc = [...g.querySelectorAll(".card")].find(
+        (c) => c.getAttribute("href") === flashHref,
+      );
+      flashHref = "";
+      if (fc) {
+        fc.classList.remove("pre");
+        fc.classList.add("in", "noanim", "flash");
+        setTimeout(() => fc.classList.remove("flash"), 1600);
+      }
+    }
+
+    // safety net: never leave a card invisible
+    setTimeout(
+      () =>
+        g.querySelectorAll(".card.pre").forEach((c) => {
+          c.classList.remove("pre");
+          c.classList.add("in");
+        }),
+      2500,
+    );
+
     $("#empty").hidden = items.length > 0;
-    $("#empty").textContent = state.q
-      ? `No matches for "${state.q}"`
-      : "Nothing here.";
+    $("#empty").innerHTML =
+      `<div class="empty-ico">${state.q ? "&#128269;" : "&#128194;"}</div>` +
+      `<div>${state.q ? `No matches for "${esc(state.q)}"` : "Nothing here."}</div>`;
 
     $("#bgrid").classList.toggle("on", state.view !== "list");
     $("#blist").classList.toggle("on", state.view === "list");
@@ -560,6 +864,18 @@
     if (e.target === posterModal) closePosterPicker();
   });
 
+  function shakeDialog() {
+    const d = document.querySelector(".poster-dialog");
+    if (!d) return;
+    d.classList.remove("shake");
+    void d.offsetWidth;
+    d.classList.add("shake");
+  }
+
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !posterModal.hidden) closePosterPicker();
+  });
+
   async function postPoster(payload) {
     if (!posterTarget) return;
 
@@ -583,6 +899,7 @@
       const wasShow = posterTarget.hint === "tv";
       posterTarget.poster = result.poster || "";
 
+      flashHref = posterTarget.url;
       closePosterPicker();
       render();
       // every episode of the show got the new poster - reload to show them all
@@ -591,6 +908,7 @@
       toast(result.poster ? "Poster saved" : "Poster reset to default");
     } catch (error) {
       toast(error.message || "Poster update failed");
+      shakeDialog();
     }
   }
 
@@ -674,6 +992,7 @@
     try {
       host = new URL(link).hostname.toLowerCase();
     } catch {
+      shakeDialog();
       return toast("That doesn't look like a link - paste the full address");
     }
 
@@ -682,6 +1001,7 @@
         host,
       )
     ) {
+      shakeDialog();
       return toast("Only TMDB and Wikipedia links are accepted");
     }
 
@@ -1088,6 +1408,7 @@
     const t = [P.msgA, P.msgS].filter(Boolean).join("   ·   ");
     $("#pchipTxt").textContent = t;
     chip.hidden = !t;
+    setBusy("msg", !!t);
     // "Preparing audio… 40%" fills the bar; anything else shows a sliding bar
     const pct = /(\d+)%/.exec(P.msgA || "");
     chip.classList.toggle("det", !!pct);
@@ -1184,6 +1505,7 @@
   /* ----- play state events + audio sync ----- */
   const spin = (on, text) => {
     $("#pspin").hidden = !on;
+    setBusy("spin", on);
     if (on) $("#pspinTxt").textContent = text || "";
   };
 
@@ -1195,11 +1517,14 @@
     updatePlay();
     wake();
     audPlay();
+    cancelNextUp();
+    popIcon("play");
   });
   vid.addEventListener("pause", () => {
     updatePlay();
     wake();
     if (P.ext) aud.pause();
+    popIcon("pause");
   });
   vid.addEventListener("waiting", () => {
     spin(true, "Buffering…");
@@ -1829,9 +2154,13 @@
       clearTimeout(tapTimer);
       lastTap = now; // keep tapping to keep skipping
       if (!touch) return toggleFs();
-      if (rel < 0.33) seekBy(-10);
-      else if (rel > 0.67) seekBy(10);
-      else togglePlay();
+      if (rel < 0.33) {
+        seekBy(-10);
+        skipFx(-1);
+      } else if (rel > 0.67) {
+        seekBy(10);
+        skipFx(1);
+      } else togglePlay();
       return;
     }
     lastTap = now;
@@ -1986,6 +2315,8 @@
 
   /* ----- opening / closing a video ----- */
   function resetPlayer() {
+    cancelNextUp();
+    killResume();
     P.token++;
     P.prepId++;
     P.tracks = null;
@@ -2024,10 +2355,122 @@
     } catch {}
   }
 
+  /* ----- player effects ----- */
+
+  // centre icon pops when you play or pause
+  function popIcon(kind) {
+    if (
+      playerEl.hidden ||
+      vid.ended ||
+      vid.seeking ||
+      performance.now() - (P.openedAt || 0) < 1500
+    )
+      return;
+    const el = $("#pfx");
+    el.innerHTML = svg(kind);
+    el.hidden = false;
+    el.classList.remove("go");
+    void el.offsetWidth;
+    el.classList.add("go");
+    clearTimeout(P.fxT);
+    P.fxT = setTimeout(() => (el.hidden = true), 650);
+  }
+
+  // double-tap skip: a ripple on that side with the seconds adding up
+  let skipAcc = 0;
+  let skipLast = 0;
+  let skipDir = 0;
+  let skipT = 0;
+
+  function skipFx(dir) {
+    const now = performance.now();
+    skipAcc = now - skipLast < 800 && dir === skipDir ? skipAcc + 10 : 10;
+    skipLast = now;
+    skipDir = dir;
+    const el = $(dir < 0 ? "#skipL" : "#skipR");
+    $(dir < 0 ? "#skipR" : "#skipL").hidden = true;
+    el.innerHTML = `<span><i class="chev">${dir < 0 ? "&#9664;&#9664;" : "&#9654;&#9654;"}</i><b>${skipAcc} seconds</b></span>`;
+    el.hidden = false;
+    el.classList.remove("go");
+    void el.offsetWidth;
+    el.classList.add("go");
+    clearTimeout(skipT);
+    skipT = setTimeout(() => (el.hidden = true), 780);
+  }
+
+  // "Resumed from 42:10" slides in with a Start over button
+  let resumeT = 0;
+
+  function resumeCard(t) {
+    const b = $("#presume");
+    $("#presumeTxt").textContent = "Resumed from " + fmtTime(t);
+    b.classList.remove("out");
+    b.hidden = false;
+    clearTimeout(resumeT);
+    resumeT = setTimeout(hideResume, 6500);
+  }
+
+  function hideResume() {
+    const b = $("#presume");
+    if (b.hidden) return;
+    b.classList.add("out");
+    clearTimeout(resumeT);
+    resumeT = setTimeout(() => (b.hidden = true), 320);
+  }
+
+  function killResume() {
+    clearTimeout(resumeT);
+    $("#presume").hidden = true;
+  }
+
+  $("#presumeBtn").addEventListener("click", () => {
+    vid.currentTime = 0;
+    hideResume();
+  });
+
+  // next episode: a countdown ring, with Play now / Cancel
+  let nuT = 0;
+
+  function startNextUp() {
+    const nxt = pl.list[pl.i + 1];
+    if (!nxt) return;
+    $("#nuTitle").textContent = pretty(nxt);
+    const box = $("#pnextup");
+    box.hidden = false;
+    box.classList.remove("go");
+    void box.offsetWidth;
+    box.classList.add("go");
+    let n = 5;
+    $("#nuNum").textContent = n;
+    clearInterval(nuT);
+    nuT = setInterval(() => {
+      n--;
+      $("#nuNum").textContent = Math.max(n, 0);
+      if (n <= 0) nextUpGo();
+    }, 1000);
+  }
+
+  function cancelNextUp() {
+    clearInterval(nuT);
+    $("#pnextup").hidden = true;
+  }
+
+  function nextUpGo() {
+    cancelNextUp();
+    if (pl.i < pl.list.length - 1) {
+      pl.i++;
+      showVid();
+    }
+  }
+
+  $("#nuPlay").addEventListener("click", nextUpGo);
+  $("#nuCancel").addEventListener("click", cancelNextUp);
+
   function showVid() {
     const it = pl.list[pl.i];
 
     resetPlayer();
+    P.openedAt = performance.now();
     $("#viewer").hidden = true;
     $("#player").hidden = false;
 
@@ -2057,7 +2500,7 @@
     vid.onloadedmetadata = () => {
       if (saved && saved.t > 5 && vid.duration && saved.t < vid.duration - 10) {
         vid.currentTime = saved.t;
-        toast("Resumed from " + fmtTime(saved.t));
+        resumeCard(saved.t);
       }
     };
 
@@ -2092,10 +2535,7 @@
     if (it) store.set(posKey(it), { t: 0, d: vid.duration });
     aud.pause();
 
-    if (pl.i < pl.list.length - 1) {
-      pl.i++;
-      showVid();
-    }
+    if (pl.i < pl.list.length - 1) startNextUp();
   });
 
   vid.addEventListener("error", () => {
