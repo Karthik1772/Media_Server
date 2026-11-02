@@ -165,7 +165,9 @@
   const title = parts.length ? parts[parts.length - 1] : "Media Library";
 
   $("#title").textContent = title;
-  document.title = title;
+  document.title = parts.length
+    ? title + " · " + (D.app || "Streamly")
+    : D.app || "Streamly";
 
   (() => {
     let acc = "/";
@@ -771,9 +773,10 @@
     `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 
   const FITS = [
-    ["contain", "Fit"],
-    ["cover", "Fill"],
-    ["fill", "Stretch"],
+    ["contain", "Fit", "Whole picture, bars if the shape differs"],
+    ["cover", "Fill", "Fills the screen, crops the edges"],
+    ["fill", "Stretch", "Fills the screen, picture is stretched"],
+    ["none", "100%", "Original pixel size"],
   ];
   const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   const SUB_COLORS = ["#ffffff", "#ffe066", "#7be0ff", "#9dff8a"];
@@ -801,6 +804,7 @@
     menu: "",
     idleT: 0,
     bright: 1,
+    zoom: { s: 1, x: 0, y: 0 }, // pinch zoom: scale and pan in px
     msgA: "",
     msgS: "",
   };
@@ -981,7 +985,64 @@
   function cycleFit() {
     P.fit = (P.fit + 1) % FITS.length;
     vid.style.objectFit = FITS[P.fit][0];
-    hud(FITS[P.fit][1], "Picture");
+    setZoom(1, 0, 0); // the button also undoes any pinch zoom
+    const [, name, note] = FITS[P.fit];
+    const same = (P.fit === 1 || P.fit === 2) && screenMatchesVideo();
+    hud(
+      name,
+      same
+        ? "Video and screen have the same shape, so little changes. Pinch to zoom."
+        : note,
+    );
+  }
+
+  // true when the picture already has (almost) the screen's shape: Fit / Fill / Stretch then look alike
+  function screenMatchesVideo() {
+    const r = stage.getBoundingClientRect();
+    if (!vid.videoWidth || !r.height) return false;
+    return (
+      Math.abs(vid.videoWidth / vid.videoHeight / (r.width / r.height) - 1) <
+      0.04
+    );
+  }
+
+  /* ----- pinch zoom + pan ----- */
+  // 25% (picture shrinks, centred) up to 500% (picture enlarged, one finger pans)
+  const ZOOM_MIN = 0.25;
+  const ZOOM_MAX = 5;
+  const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 5]; // for the + / - keys and trackpad pinch
+
+  function setZoom(sc, x, y) {
+    const z = P.zoom;
+    z.s = clamp(sc, ZOOM_MIN, ZOOM_MAX);
+    if (z.s <= 1) {
+      z.x = z.y = 0; // zoomed out: nothing to pan, the picture stays centred
+    } else {
+      const r = stage.getBoundingClientRect();
+      z.x = clamp(x, (-(z.s - 1) * r.width) / 2, ((z.s - 1) * r.width) / 2);
+      z.y = clamp(y, (-(z.s - 1) * r.height) / 2, ((z.s - 1) * r.height) / 2);
+    }
+    vid.style.transform =
+      z.s === 1 ? "" : `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
+  }
+
+  const zoomHud = () =>
+    hud(
+      "Zoom " + Math.round(P.zoom.s * 100) + "%",
+      "25% – 500%  ·  Picture button resets",
+      (P.zoom.s - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN),
+    );
+
+  // one step along 25 · 50 · 75 · 100 · 125 · 150 · 200 · 300 · 400 · 500 %
+  function stepZoom(dir) {
+    const cur = P.zoom.s;
+    const next =
+      dir > 0
+        ? ZOOM_STEPS.find((v) => v > cur + 0.001)
+        : [...ZOOM_STEPS].reverse().find((v) => v < cur - 0.001);
+    if (next === undefined) return zoomHud();
+    setZoom(next, (P.zoom.x * next) / cur, (P.zoom.y * next) / cur);
+    zoomHud();
   }
 
   /* ----- HUD (centre pop-up for gestures and shortcuts) ----- */
@@ -1009,11 +1070,13 @@
   }
 
   /* ----- auto-hide controls, lock ----- */
-  function wake() {
+  const HIDE_MS = 10000; // controls stay 10 s after a tap, or until you tap the picture again
+
+  function wake(ms = HIDE_MS) {
     playerEl.classList.remove("idle");
     clearTimeout(P.idleT);
     if (!vid.paused && !P.menu && !scrubbing) {
-      P.idleT = setTimeout(() => playerEl.classList.add("idle"), 3200);
+      P.idleT = setTimeout(() => playerEl.classList.add("idle"), ms);
     }
   }
 
@@ -1598,10 +1661,34 @@
     tapTimer = setTimeout(() => (touch ? toggleControls() : togglePlay()), 280);
   }
 
+  // fingers on the picture (for pinch zoom). The picture itself must NOT wake the controls
+  // on touch-down: the tap handler decides (show if hidden, hide if shown).
+  const pts = new Map();
+  let pinch = null;
+
   stage.addEventListener("pointerdown", (e) => {
-    wake();
     if (P.locked) return showUnlock();
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (e.pointerType !== "mouse") {
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinch = {
+          d0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+          s0: P.zoom.s,
+          mx0: (a.x + b.x) / 2,
+          my0: (a.y + b.y) / 2,
+          x0: P.zoom.x,
+          y0: P.zoom.y,
+        };
+        gest = null;
+        lastTap = 0;
+        clearTimeout(tapTimer);
+        closeMenu();
+        return;
+      }
+      if (pts.size > 2) return;
+    }
     gest = {
       id: e.pointerId,
       x: e.clientX,
@@ -1612,7 +1699,21 @@
   });
 
   stage.addEventListener("pointermove", (e) => {
-    if (e.pointerType === "mouse") return wake();
+    if (e.pointerType === "mouse") return wake(4000);
+    if (pts.has(e.pointerId))
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const sc = pinch.s0 * (d / pinch.d0);
+      setZoom(
+        Math.abs(sc - 1) < 0.04 ? 1 : sc, // snaps to exactly 100% when you pass through it
+        pinch.x0 + (a.x + b.x) / 2 - pinch.mx0,
+        pinch.y0 + (a.y + b.y) / 2 - pinch.my0,
+      );
+      zoomHud();
+      return;
+    }
     if (!gest || e.pointerId !== gest.id || P.locked) return;
     const dx = e.clientX - gest.x;
     const dy = e.clientY - gest.y;
@@ -1620,17 +1721,23 @@
     if (!gest.mode) {
       if (Math.hypot(dx, dy) < 16) return;
       gest.mode =
-        Math.abs(dx) > Math.abs(dy)
-          ? "seek"
-          : gest.x - r.left < r.width / 2
-            ? "bright"
-            : "vol";
+        P.zoom.s > 1 // zoomed in: one finger moves the picture
+          ? "pan"
+          : Math.abs(dx) > Math.abs(dy)
+            ? "seek"
+            : gest.x - r.left < r.width / 2
+              ? "bright"
+              : "vol";
+      gest.zx = P.zoom.x;
+      gest.zy = P.zoom.y;
       gest.t0 = vid.currentTime;
       gest.v0 = prefs.volume;
       gest.b0 = P.bright;
       closeMenu();
     }
-    if (gest.mode === "seek") {
+    if (gest.mode === "pan") {
+      setZoom(P.zoom.s, gest.zx + dx, gest.zy + dy);
+    } else if (gest.mode === "seek") {
       if (!isFinite(vid.duration)) return;
       gest.target = clamp(gest.t0 + (dx / r.width) * 150, 0, vid.duration);
       const diff = Math.round(gest.target - gest.t0);
@@ -1652,6 +1759,8 @@
   });
 
   function endGesture(e, cancelled) {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
     const g = gest;
     gest = null;
     if (!g || e.pointerId !== g.id) return;
@@ -1668,11 +1777,24 @@
     "wheel",
     (e) => {
       e.preventDefault();
-      bumpVolume(e.deltaY < 0 ? 0.05 : -0.05);
+      if (e.ctrlKey) {
+        // trackpad pinch (or Ctrl + wheel) zooms; throttled so one pinch is a few steps
+        const now = performance.now();
+        if (now - (stage._zt || 0) > 140) {
+          stage._zt = now;
+          stepZoom(e.deltaY < 0 ? 1 : -1);
+        }
+      } else bumpVolume(e.deltaY < 0 ? 0.05 : -0.05);
     },
     { passive: false },
   );
-  playerEl.addEventListener("pointermove", wake);
+  // mouse movement shows the controls briefly; touching a control button keeps them up for 10 s
+  playerEl.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "mouse") wake(4000);
+  });
+  playerEl.addEventListener("pointerdown", (e) => {
+    if (!e.target.closest("#stage")) wake();
+  });
   playerEl.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (b) b.blur(); // so Space / Enter keep controlling the video, not the last button
@@ -1696,6 +1818,9 @@
     P.delay = 0;
     P.fit = 0;
     P.bright = 1;
+    setZoom(1, 0, 0);
+    pts.clear();
+    pinch = null;
     vid.style.objectFit = "";
     vid.style.filter = "";
     leaveExt();
@@ -1985,7 +2110,12 @@
       else if (k === "p" || k === "P") stepVid(-1);
       else if (k === "f" || k === "F") toggleFs();
       else if (k === "m" || k === "M") toggleMute();
-      else if (k === "c" || k === "C") cycleSub();
+      else if (k === "+" || k === "=") stepZoom(1);
+      else if (k === "-" || k === "_") stepZoom(-1);
+      else if (k === "0") {
+        setZoom(1, 0, 0);
+        zoomHud();
+      } else if (k === "c" || k === "C") cycleSub();
       else if (k === "a" || k === "A") cycleAudio();
       else if (k === "<" || k === ",") {
         const i = SPEEDS.indexOf(vid.playbackRate);

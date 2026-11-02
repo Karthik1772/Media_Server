@@ -1,5 +1,5 @@
 """
-Media Server  -  run with:  python server.py
+Streamly  -  run with:  python server.py
 
 Serves the folder you start it from, with:
   * a responsive Netflix-style web UI (phone / tablet / laptop)
@@ -49,6 +49,9 @@ LOG_LIFECYCLE = True  # True : REQUEST + RESPONSE + DONE/ABORTED lines per reque
 # False: only the final line (DONE / ABORTED / ERROR)
 LINE_W = 10 + 10 + 17 + 8 + NAME_W + 2 + RES_W + 2 + 8
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_NAME = (
+    "Streamly"  # shown in the console banner, the browser tab and the page header
+)
 UI_DIR = os.path.join(BASE_DIR, "ui")
 UI_PREFIX = "/__ui/"  # URL prefix that maps to the ./ui folder
 
@@ -104,7 +107,7 @@ load_env(os.path.join(BASE_DIR, ".env"))
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 
 # Folder that gets shared. By default it is the folder ABOVE this one, so with
-# E:\Media Server\server.py you share E:\  (Films, Web Series, photos ...).
+# E:\Streamly\server.py you share E:\  (Films, Web Series, photos ...).
 # Change it to any path you like, e.g.  MEDIA_ROOT = r"E:\"
 # You can also override it per run:   python server.py "D:\Movies"
 MEDIA_ROOT = os.path.dirname(BASE_DIR)
@@ -207,7 +210,7 @@ def banner(ip):
         ),
     ]
     print(f"{CYN}╭{'─' * w}╮{R}")
-    print(f"{CYN}│{R}{B}{'  MEDIA SERVER'.ljust(w)}{R}{CYN}│{R}")
+    print(f"{CYN}│{R}{B}{('  ' + APP_NAME.upper()).ljust(w)}{R}{CYN}│{R}")
     print(f"{CYN}├{'─' * w}┤{R}")
     for k, v in rows:
         label = f"  {k:<8}"
@@ -493,11 +496,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     item.update(posters.describe_image(key, n, st.st_size, st.st_mtime))
             items.append(item)
 
-        data = json.dumps({"path": self.req_path, "items": items}, ensure_ascii=False)
+        data = json.dumps(
+            {"path": self.req_path, "items": items, "app": APP_NAME}, ensure_ascii=False
+        )
         data = data.replace("<", "\\u003c")
-        title = self.req_path.strip("/").split("/")[-1] or "Media Library"
+        folder = self.req_path.strip("/").split("/")[-1]
+        title = f"{folder} · {APP_NAME}" if folder else APP_NAME
         payload = (
-            template.replace("__TITLE__", html.escape(title)).replace("__DATA__", data)
+            template.replace("__TITLE__", html.escape(title))
+            .replace("__APPNAME__", html.escape(APP_NAME))
+            .replace("__DATA__", data)
         ).encode("utf-8", "replace")
 
         self.send_response(HTTPStatus.OK)
