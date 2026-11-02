@@ -27,10 +27,36 @@
     <link rel="apple-touch-icon" href="/__ui/assets/Favicon.png" />
   </head>
   <body>
+    <div id="splash" class="splash" aria-hidden="true">
+      <div class="splash-in">
+        <img class="splash-logo" src="/__ui/assets/Logo.png" alt="" />
+        <div class="splash-bar"><i></i></div>
+      </div>
+    </div>
+    <script>
+      // splash plays once per browser session, so moving between folders stays instant
+      (function () {
+        var el = document.getElementById("splash");
+        try {
+          if (sessionStorage.getItem("splashSeen")) return el.remove();
+          sessionStorage.setItem("splashSeen", "1");
+        } catch (e) {}
+        var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        setTimeout(
+          function () {
+            el.classList.add("out");
+            setTimeout(function () {
+              el.remove();
+            }, 600);
+          },
+          reduce ? 500 : 1900,
+        );
+      })();
+    </script>
     <header class="top">
       <a class="logo" href="/">
-      <img class="logo-img" src="/__ui/assets/Favicon.png" alt="" />
-      <b>__APPNAME__</b>
+        <img class="logo-img" src="/__ui/assets/Favicon.png" alt="" />
+        <b>__APPNAME__</b>
       </a>
       <div class="search">
         <span>&#128269;</span
@@ -79,7 +105,10 @@
         <video id="vid" playsinline></video>
         <audio id="aud" preload="auto"></audio>
         <div id="subs"></div>
-        <div id="pspin" class="pspin" hidden><i></i></div>
+        <div id="pspin" class="pspin" hidden>
+          <img class="pspin-logo" src="/__ui/assets/Logo.png" alt="" />
+          <i></i><span id="pspinTxt"></span>
+        </div>
         <div id="ghud" class="ghud" hidden></div>
       </div>
       <div class="pbar">
@@ -88,7 +117,16 @@
         <button class="btn" id="pvlc" title="Open in VLC">VLC</button>
         <a class="btn" id="pdl" download>&#11015;</a>
       </div>
-      <div id="pchip" class="pchip" hidden></div>
+      <div id="pchip" class="pchip" hidden>
+        <i class="cspin"></i><span id="pchipTxt"></span
+        ><em class="cbar"><i></i></em>
+      </div>
+      <input
+        id="subFile"
+        type="file"
+        accept=".srt,.vtt,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream"
+        hidden
+      />
       <div id="perr" hidden></div>
       <div id="pctrl" class="pctrl">
         <div class="seekrow">
@@ -259,15 +297,16 @@
           <button class="action-btn" type="submit">Search posters</button>
         </form>
         <p id="posterHelp" class="poster-help">
-          Searches TMDB and Wikipedia. Pick the right poster, or paste a link
-          below. Your choice is saved permanently and the automatic scan will
-          never change it.
+          Searches TMDB (posters come from media.themoviedb.org) and Wikipedia.
+          Pick the right poster, or paste a link below. Your choice is saved
+          permanently and the automatic scan will never change it.
         </p>
         <div id="posterResults" class="poster-results"></div>
         <form id="posterLinkForm" class="poster-upload">
           <label for="posterLink"
             >Or paste a link: a TMDB movie / TV page, a Wikipedia page, or an
-            image link from image.tmdb.org / upload.wikimedia.org</label
+            image link from media.themoviedb.org / image.tmdb.org /
+            upload.wikimedia.org</label
           >
           <input
             id="posterLink"

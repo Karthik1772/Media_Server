@@ -1,5 +1,5 @@
 """
-Streamly  -  run with:  python server.py
+Streamify  -  run with:  python server.py
 
 Serves the folder you start it from, with:
   * a responsive Netflix-style web UI (phone / tablet / laptop)
@@ -50,7 +50,7 @@ LOG_LIFECYCLE = True  # True : REQUEST + RESPONSE + DONE/ABORTED lines per reque
 LINE_W = 10 + 10 + 17 + 8 + NAME_W + 2 + RES_W + 2 + 8
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = (
-    "Streamly"  # shown in the console banner, the browser tab and the page header
+    "Streamify"  # shown in the console banner, the browser tab and the page header
 )
 UI_DIR = os.path.join(BASE_DIR, "ui")
 UI_PREFIX = "/__ui/"  # URL prefix that maps to the ./ui folder
@@ -107,7 +107,7 @@ load_env(os.path.join(BASE_DIR, ".env"))
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 
 # Folder that gets shared. By default it is the folder ABOVE this one, so with
-# E:\Streamly\server.py you share E:\  (Films, Web Series, photos ...).
+# E:\Streamify\server.py you share E:\  (Films, Web Series, photos ...).
 # Change it to any path you like, e.g.  MEDIA_ROOT = r"E:\"
 # You can also override it per run:   python server.py "D:\Movies"
 MEDIA_ROOT = os.path.dirname(BASE_DIR)

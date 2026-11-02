@@ -61,6 +61,7 @@ CACHE_PREFIXES = (FILM_PREFIX, SHORT_PREFIX, PHOTO_PREFIX, VIEW_PREFIX, AUDIO_PR
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".wmv", ".flv", ".3gp"}
 IMAGE_HOSTS = (
     "image.tmdb.org",
+    "media.themoviedb.org",  # where themoviedb.org pages serve their posters
     "upload.wikimedia.org",
 )  # posters may only come from here
 HIDDEN_DIRS = {
@@ -454,6 +455,54 @@ class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _IMAGE_OPENER = urllib.request.build_opener(_SameHostRedirect)
+
+
+TMDB_PAGE_HOSTS = ("themoviedb.org", "www.themoviedb.org")
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+
+class _TmdbPageRedirect(urllib.request.HTTPRedirectHandler):
+    """A TMDB page link may only bounce between TMDB's own pages."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        host = (urllib.parse.urlparse(newurl).hostname or "").lower()
+        if host not in TMDB_PAGE_HOSTS:
+            raise urllib.error.URLError("redirected to a site that isn't allowed")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_TMDB_PAGE_OPENER = urllib.request.build_opener(_TmdbPageRedirect)
+_OG_IMAGE = re.compile(
+    r"<meta[^>]+property=[\"']og:image[\"'][^>]*>|<meta[^>]+content=[^>]+property=[\"']og:image[\"'][^>]*>",
+    re.I,
+)
+
+
+def tmdb_page_poster(page_url):
+    """Poster of a themoviedb.org movie / TV page, read from the page itself (no API key).
+
+    The page advertises its poster as an og:image on media.themoviedb.org / image.tmdb.org.
+    """
+    try:
+        html = http_get(
+            page_url,
+            {"User-Agent": BROWSER_UA, "Accept": "text/html"},
+            timeout=12,
+            limit=900_000,
+            opener=_TMDB_PAGE_OPENER,
+        ).decode("utf-8", "replace")
+    except FetchError:
+        return ""
+    for tag in _OG_IMAGE.findall(html):
+        m = re.search(r"content=[\"']([^\"']+)[\"']", tag, re.I)
+        if m:
+            url = m.group(1).replace("&amp;", "&")
+            if _image_host_ok(url):
+                return url
+    return ""
 
 
 def http_get(url, headers=None, timeout=8, limit=3_000_000, opener=None):
@@ -1854,7 +1903,7 @@ def sibling_keys(key):
 
 LINK_HELP = (
     "Only TMDB and Wikipedia links work: a movie / TV page on themoviedb.org, "
-    "a page on wikipedia.org, or an image link from image.tmdb.org / upload.wikimedia.org."
+    "a page on wikipedia.org, or an image link from media.themoviedb.org / image.tmdb.org / upload.wikimedia.org."
 )
 
 
@@ -1874,15 +1923,24 @@ def resolve_link(link):
                 "That TMDB link isn't a movie or TV page. Open the movie on themoviedb.org "
                 "and copy its address."
             )
-        if not TMDB_KEY:
-            raise ValueError(
-                "TMDB page links need a TMDB API key in server.py - or paste the poster's "
-                "image link (image.tmdb.org) instead."
-            )
-        detail = _tmdb_request(f"/{m.group(1)}/{m.group(2)}", {"language": "en-US"})
-        if not detail.get("poster_path"):
-            raise ValueError("That TMDB page has no poster.")
-        return "https://image.tmdb.org/t/p/w500" + detail["poster_path"]
+        if TMDB_KEY:
+            try:
+                detail = _tmdb_request(
+                    f"/{m.group(1)}/{m.group(2)}", {"language": "en-US"}
+                )
+                if detail.get("poster_path"):
+                    return "https://image.tmdb.org/t/p/w500" + detail["poster_path"]
+            except FetchError:
+                pass  # fall through to reading the page itself
+        # no key (or the API failed): read the poster straight from the TMDB page
+        page = f"https://www.themoviedb.org/{m.group(1)}/{m.group(2)}"
+        found = tmdb_page_poster(page)
+        if found:
+            return found
+        raise ValueError(
+            "Couldn't read a poster from that TMDB page. Right-click the poster on "
+            "themoviedb.org, copy the image address (media.themoviedb.org) and paste that instead."
+        )
     if re.fullmatch(r"[a-z]{2,3}\.wikipedia\.org", host):
         m = re.match(r"^/wiki/(.+)$", parsed.path)
         if not m:

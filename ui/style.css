@@ -907,18 +907,37 @@ select:focus-visible {
     position: absolute;
     inset: 0;
     z-index: 3;
-    display: grid;
-    place-items: center;
-    pointer-events: none
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    pointer-events: none;
+    background: radial-gradient(circle at center, rgba(0, 0, 0, .35), transparent 60%);
+    animation: fadeIn .25s ease both
 }
 
 .pspin i {
-    width: 46px;
-    height: 46px;
+    width: 54px;
+    height: 54px;
     border-radius: 50%;
-    border: 4px solid rgba(255, 255, 255, .25);
-    border-top-color: #fff;
+    border: 4px solid rgba(255, 255, 255, .18);
+    border-top-color: var(--accent);
+    border-right-color: var(--accent2);
+    box-shadow: 0 0 22px rgba(124, 92, 255, .45);
     animation: pspin .8s linear infinite
+}
+
+.pspin span {
+    font-size: 14px;
+    letter-spacing: .02em;
+    color: #fff;
+    text-shadow: 0 1px 4px #000;
+    animation: pulse 1.4s ease-in-out infinite
+}
+
+.pspin span:empty {
+    display: none
 }
 
 @keyframes pspin {
@@ -927,9 +946,15 @@ select:focus-visible {
     }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .pspin i {
-        animation-duration: 2.4s
+@keyframes fadeIn {
+    from {
+        opacity: 0
+    }
+}
+
+@keyframes pulse {
+    50% {
+        opacity: .55
     }
 }
 
@@ -1383,4 +1408,459 @@ select:focus-visible {
 .thumb.heic-missing {
     background: var(--panel2);
     color: var(--mute)
+}
+
+/* ---------- loading effects ---------- */
+
+/* status chip (subtitles / audio): spinner + progress bar */
+.pchip {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    position: absolute;
+    overflow: hidden;
+    animation: chipIn .25s ease both
+}
+
+.pchip[hidden] {
+    display: none
+}
+
+.cspin,
+.mspin {
+    flex: none;
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, .25);
+    border-top-color: var(--accent);
+    animation: pspin .7s linear infinite
+}
+
+.mspin {
+    width: 13px;
+    height: 13px
+}
+
+.cbar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, .12);
+    overflow: hidden
+}
+
+.cbar i {
+    display: block;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    animation: slide 1.1s ease-in-out infinite
+}
+
+.pchip.det .cbar i {
+    width: var(--p, 0%);
+    animation: none;
+    transition: width .5s ease
+}
+
+@keyframes slide {
+    from {
+        transform: translateX(-100%)
+    }
+
+    to {
+        transform: translateX(260%)
+    }
+}
+
+@keyframes chipIn {
+    from {
+        opacity: 0;
+        translate: 0 -6px
+    }
+}
+
+/* library cards: soft entrance, and a shimmer until the poster / photo has loaded */
+.card {
+    animation: cardIn .4s ease backwards
+}
+
+@keyframes cardIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px)
+    }
+}
+
+.thumb img {
+    opacity: 0;
+    transition: opacity .35s ease
+}
+
+.thumb img.ld {
+    opacity: 1
+}
+
+.thumb:has(img:not(.ld))::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .16) 50%, transparent 70%);
+    background-size: 220% 100%;
+    animation: shimmer 1.3s linear infinite
+}
+
+@keyframes shimmer {
+    from {
+        background-position: 120% 0
+    }
+
+    to {
+        background-position: -120% 0
+    }
+}
+
+/* poster picker: placeholder cards while searching, spinner while saving */
+.poster-skel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 8px;
+    background: var(--panel)
+}
+
+.poster-skel i,
+.poster-skel b {
+    display: block;
+    border-radius: 7px;
+    background: linear-gradient(100deg, var(--panel2) 30%, rgba(128, 128, 150, .28) 50%, var(--panel2) 70%);
+    background-size: 220% 100%;
+    animation: shimmer 1.3s linear infinite
+}
+
+.poster-skel i {
+    aspect-ratio: 2/3
+}
+
+.poster-skel b {
+    height: 11px
+}
+
+.poster-skel b+b {
+    width: 60%
+}
+
+.poster-candidate.busy,
+.action-btn.busy {
+    position: relative;
+    pointer-events: none;
+    opacity: .75
+}
+
+.poster-candidate.busy::after,
+.action-btn.busy::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 26px;
+    height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, .3);
+    border-top-color: #fff;
+    animation: pspin .7s linear infinite
+}
+
+.action-btn.busy {
+    color: transparent
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .card,
+    .pchip,
+    .pspin {
+        animation: none
+    }
+
+    .pspin i,
+    .cspin,
+    .mspin {
+        animation-duration: 2.4s
+    }
+
+    .pspin span,
+    .cbar i,
+    .thumb:has(img:not(.ld))::after,
+    .poster-skel i,
+    .poster-skel b {
+        animation: none
+    }
+
+    .thumb img {
+        transition: none
+    }
+}
+
+/* ---------- responsive layout ---------- */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%
+}
+
+img,
+video {
+    max-width: 100%
+}
+
+body {
+    overflow-x: hidden
+}
+
+/* header: the search box shrinks instead of pushing the page wider */
+.top {
+    min-width: 0;
+    padding-left: calc(16px + env(safe-area-inset-left));
+    padding-right: calc(16px + env(safe-area-inset-right))
+}
+
+.logo {
+    min-width: 0;
+    flex: 0 1 auto
+}
+
+.logo b {
+    overflow: hidden;
+    text-overflow: ellipsis
+}
+
+.search {
+    min-width: 0;
+    flex: 1 1 0
+}
+
+.wrap {
+    padding-left: calc(16px + env(safe-area-inset-left));
+    padding-right: calc(16px + env(safe-area-inset-right))
+}
+
+.head h1,
+.name {
+    overflow-wrap: anywhere
+}
+
+/* small phones: keep logo mark only, give the search the room */
+@media (max-width: 420px) {
+    .logo b {
+        display: none
+    }
+
+    .search {
+        margin-left: 0
+    }
+
+    .top {
+        gap: 8px
+    }
+
+    .theme-toggle {
+        width: 40px;
+        height: 40px
+    }
+}
+
+/* tablets: a little more breathing room, 3-4 columns */
+@media (min-width: 601px) and (max-width: 1024px) {
+
+    .grid,
+    .grid.posters {
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr))
+    }
+}
+
+/* big screens: let the library use the width and scale cards up */
+@media (min-width: 1600px) {
+    .wrap {
+        max-width: 1900px
+    }
+
+    .grid,
+    .grid.posters {
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr))
+    }
+}
+
+@media (min-width: 2200px) {
+    .wrap {
+        max-width: 2400px
+    }
+
+    .grid,
+    .grid.posters {
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))
+    }
+}
+
+/* phone held sideways: short screens need compact bars */
+@media (max-height: 480px) and (orientation: landscape) {
+    .top {
+        padding-top: calc(6px + env(safe-area-inset-top));
+        padding-bottom: 6px
+    }
+
+    .pchip {
+        top: calc(44px + env(safe-area-inset-top))
+    }
+
+    .pspin i {
+        width: 40px;
+        height: 40px
+    }
+}
+
+.grid.list,
+.grid.posters.list {
+    grid-template-columns: 1fr
+}
+
+/* player menu never covers the top bar or the controls on short screens */
+@media (max-height: 560px) {
+    #player .pmenu {
+        bottom: 96px;
+        max-height: calc(100% - 96px - 64px - env(safe-area-inset-top))
+    }
+}
+
+@media (max-height: 560px) and (orientation: landscape) {
+    #player .pmenu {
+        width: min(340px, 46vw)
+    }
+}
+
+
+/* ---------- logo animations ---------- */
+.splash {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: grid;
+    place-items: center;
+    background: #080620;
+    transition: opacity .5s ease, transform .5s ease, visibility .5s
+}
+
+.splash.out {
+    opacity: 0;
+    transform: scale(1.04);
+    visibility: hidden;
+    pointer-events: none
+}
+
+.splash-in {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: min(820px, 96vw)
+}
+
+/* the logo's own dark edges melt into the page instead of showing a box */
+.splash-logo,
+.pspin-logo {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 70vh;
+    object-fit: contain;
+    -webkit-mask-image: radial-gradient(ellipse closest-side at center, #000 60%, transparent 100%);
+    mask-image: radial-gradient(ellipse closest-side at center, #000 60%, transparent 100%)
+}
+
+.splash-logo {
+    animation: logoIn 1s cubic-bezier(.2, .8, .2, 1) both, logoGlow 2.4s ease-in-out 1s infinite
+}
+
+@keyframes logoIn {
+    from {
+        opacity: 0;
+        transform: scale(.88);
+        filter: blur(14px)
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+        filter: blur(0)
+    }
+}
+
+@keyframes logoGlow {
+    50% {
+        filter: drop-shadow(0 0 26px rgba(124, 92, 255, .55)) brightness(1.08)
+    }
+}
+
+.splash-bar {
+    width: min(260px, 55vw);
+    height: 3px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, .1);
+    animation: fadeIn .6s .5s ease both
+}
+
+.splash-bar i {
+    display: block;
+    height: 100%;
+    width: 40%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    animation: slide 1.1s ease-in-out infinite
+}
+
+/* player: logo pulses behind the spinner while a title opens */
+.pspin-logo {
+    display: none
+}
+
+.pspin.intro {
+    background: #080620
+}
+
+.pspin.intro .pspin-logo {
+    display: block;
+    width: min(520px, 82vw);
+    max-height: 46vh;
+    animation: logoIn .7s cubic-bezier(.2, .8, .2, 1) both, logoGlow 2.2s ease-in-out .7s infinite
+}
+
+@media (max-height: 480px) and (orientation: landscape) {
+    .pspin.intro .pspin-logo {
+        max-height: 40vh;
+        width: auto
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .splash-logo,
+    .pspin.intro .pspin-logo,
+    .splash-bar,
+    .splash-bar i {
+        animation: none
+    }
+
+    .splash,
+    .splash.out {
+        transition: opacity .2s ease;
+        transform: none
+    }
 }

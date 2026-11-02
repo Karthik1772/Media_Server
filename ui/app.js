@@ -376,7 +376,7 @@
     } else if (it.kind === "image") {
       th = `
         <div class="thumb">
-          <img loading="lazy" decoding="async"
+          <img loading="lazy" decoding="async" onload="this.classList.add('ld')"
                src="${esc(it.thumb || it.url)}" alt=""${
                  it.thumb
                    ? ` data-o="${esc(it.url)}" onerror="if(this.dataset.o){this.src=this.dataset.o;this.dataset.o=''}"`
@@ -391,7 +391,7 @@
       // poster (Vedios) or preview frame (Photos); otherwise the CSS default image shows
       const art = it.poster
         ? `<img class="poster-img" src="${esc(it.poster)}" alt=""
-                loading="lazy" decoding="async" onerror="this.remove()">`
+                loading="lazy" decoding="async" onload="this.classList.add('ld')" onerror="this.remove()">`
         : "";
 
       th = `
@@ -472,7 +472,11 @@
     const items = list();
     const frag = document.createDocumentFragment();
 
-    items.forEach((it) => frag.appendChild(card(it)));
+    items.forEach((it, n) => {
+      const c = card(it);
+      c.style.animationDelay = Math.min(n, 14) * 35 + "ms";
+      frag.appendChild(c);
+    });
     g.appendChild(frag);
     items.forEach(queueCapture);
 
@@ -590,7 +594,9 @@
     if (!q) return toast("Enter a movie title first");
 
     const results = $("#posterResults");
-    results.innerHTML = '<p class="poster-help">Searching posters…</p>';
+    results.innerHTML = Array(6)
+      .fill('<div class="poster-skel"><i></i><b></b><b></b></div>')
+      .join("");
 
     try {
       const url =
@@ -632,10 +638,11 @@
           </span>`;
 
         item.addEventListener("click", () => {
+          item.classList.add("busy");
           postPoster({
             action: "select",
             candidate_id: candidate.id,
-          });
+          }).finally(() => item.classList.remove("busy"));
         });
 
         results.appendChild(item);
@@ -672,7 +679,13 @@
     }
 
     toast("Fetching the image…");
-    postPoster({ action: "url", link });
+    const btn = $("#posterLinkBtn");
+    btn.classList.add("busy");
+    btn.disabled = true;
+    postPoster({ action: "url", link }).finally(() => {
+      btn.classList.remove("busy");
+      btn.disabled = false;
+    });
   });
 
   $("#posterReset").addEventListener("click", () => {
@@ -798,6 +811,7 @@
     extIdx: 0,
     sId: "", // chosen subtitle id ('' = off)
     cues: [],
+    localSubs: [], // subtitle files picked on this device: {id, name, text, cues}
     delay: 0, // subtitle delay in seconds (+ = later)
     locked: false,
     fit: 0,
@@ -1065,8 +1079,13 @@
     P["msg" + which] = text;
     const chip = $("#pchip");
     const t = [P.msgA, P.msgS].filter(Boolean).join("   ·   ");
-    chip.textContent = t;
+    $("#pchipTxt").textContent = t;
     chip.hidden = !t;
+    // "Preparing audio… 40%" fills the bar; anything else shows a sliding bar
+    const pct = /(\d+)%/.exec(P.msgA || "");
+    chip.classList.toggle("det", !!pct);
+    chip.style.setProperty("--p", pct ? pct[1] + "%" : "0%");
+    renderMenu(); // the row being loaded shows a small spinner
   }
 
   /* ----- auto-hide controls, lock ----- */
@@ -1156,7 +1175,11 @@
   }
 
   /* ----- play state events + audio sync ----- */
-  const spin = (on) => ($("#pspin").hidden = !on);
+  const spin = (on, text, intro) => {
+    $("#pspin").hidden = !on;
+    $("#pspin").classList.toggle("intro", !!intro); // logo shows only while opening a title
+    if (on) $("#pspinTxt").textContent = text || "";
+  };
 
   function audPlay() {
     if (P.ext && aud.paused && aud.readyState >= 2) aud.play().catch(() => {});
@@ -1173,7 +1196,7 @@
     if (P.ext) aud.pause();
   });
   vid.addEventListener("waiting", () => {
-    spin(true);
+    spin(true, "Buffering…");
     if (P.ext) aud.pause();
   });
   vid.addEventListener("playing", () => {
@@ -1306,6 +1329,13 @@
     renderMenu();
     if (!auto) saveTrk("s");
     if (!id || !it) return;
+    const local = P.localSubs.find((x) => x.id === id);
+    if (local) {
+      P.cues = local.cues;
+      if (!auto) toast("Subtitles on");
+      tickSubs(true);
+      return;
+    }
     setMsg("S", "Loading subtitles…");
     try {
       const r = await fetch(
@@ -1330,6 +1360,113 @@
       renderMenu();
       toast(err.message);
     }
+  }
+
+  /* ----- subtitle files picked on this device (.srt / .vtt) ----- */
+  const LSUB_INDEX = "lsubIdx"; // videos that have saved device subtitles, oldest first
+  const LSUB_VIDEOS = 15; // keep the newest 15 so localStorage never fills up
+  const LSUB_MAX = 400000; // characters per file that get remembered
+  const lsubKey = (it) => "lsub:" + it.url;
+
+  // .srt files are often not UTF-8 (Windows-1252, UTF-16): try them in turn
+  function decodeSub(buf) {
+    const u = new Uint8Array(buf);
+    if (u[0] === 0xff && u[1] === 0xfe)
+      return new TextDecoder("utf-16le").decode(u);
+    if (u[0] === 0xfe && u[1] === 0xff)
+      return new TextDecoder("utf-16be").decode(u);
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(u);
+    } catch {
+      return new TextDecoder("windows-1252").decode(u);
+    }
+  }
+
+  function addLocalSub(name, text) {
+    const cues = parseVTT(text);
+    if (!cues.length) return null;
+    const id = "L:" + name;
+    P.localSubs = P.localSubs.filter((x) => x.id !== id);
+    const sub = { id, name, text, cues };
+    P.localSubs.push(sub);
+    return sub;
+  }
+
+  function saveLocalSubs(it) {
+    const list = P.localSubs
+      .filter((x) => x.text.length <= LSUB_MAX)
+      .map((x) => ({ n: x.name, t: x.text }));
+    const idx = store.get(LSUB_INDEX, []).filter((k) => k !== it.url);
+    if (list.length) {
+      store.set(lsubKey(it), list);
+      idx.push(it.url);
+    } else {
+      try {
+        localStorage.removeItem(lsubKey(it));
+      } catch {}
+    }
+    while (idx.length > LSUB_VIDEOS) {
+      try {
+        localStorage.removeItem("lsub:" + idx.shift());
+      } catch {}
+    }
+    store.set(LSUB_INDEX, idx);
+  }
+
+  function restoreLocalSubs(it) {
+    P.localSubs = [];
+    (store.get(lsubKey(it), []) || []).forEach((x) => {
+      if (x && typeof x.t === "string") addLocalSub(x.n, x.t);
+    });
+  }
+
+  async function loadSubFile(file) {
+    const it = pl.list[pl.i];
+    if (!file || !it) return;
+    if (!/\.(srt|vtt|txt)$/i.test(file.name))
+      return toast("Pick an .srt or .vtt subtitle file");
+    if (file.size > 3e6) return toast("That file is too big to be a subtitle");
+    const token = P.token;
+    setMsg("S", "Reading subtitle file…");
+    try {
+      const text = decodeSub(await file.arrayBuffer());
+      if (token !== P.token) return;
+      setMsg("S", "");
+      const sub = addLocalSub(file.name, text);
+      if (!sub) return toast("No readable subtitle lines in that file");
+      saveLocalSubs(it);
+      chooseSub(sub.id);
+    } catch {
+      if (token === P.token) setMsg("S", "");
+      toast("Couldn't read that file");
+    }
+  }
+
+  $("#subFile").addEventListener("change", (e) => {
+    loadSubFile(e.target.files && e.target.files[0]);
+    e.target.value = ""; // so the same file can be picked again
+  });
+
+  // drop a .srt / .vtt anywhere on the player (desktop)
+  playerEl.addEventListener("dragover", (e) => {
+    if (e.dataTransfer && [...e.dataTransfer.types].includes("Files"))
+      e.preventDefault();
+  });
+  playerEl.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (!f) return;
+    e.preventDefault();
+    loadSubFile(f);
+  });
+
+  function removeLocalSub() {
+    const it = pl.list[pl.i];
+    const cur = P.localSubs.find((x) => x.id === P.sId);
+    if (!cur || !it) return;
+    P.localSubs = P.localSubs.filter((x) => x !== cur);
+    saveLocalSubs(it);
+    chooseSub("");
+    toast("Removed " + cur.name);
   }
 
   /* ----- audio tracks ----- */
@@ -1446,7 +1583,11 @@
     let sid = "";
     const chosenHere = !!saved && typeof saved.s === "string"; // you picked (or turned off) subtitles for this video
     if (chosenHere) {
-      sid = T.subs.some((s) => s.id === saved.s && s.ok) ? saved.s : "";
+      sid =
+        T.subs.some((s) => s.id === saved.s && s.ok) ||
+        P.localSubs.some((s) => s.id === saved.s)
+          ? saved.s
+          : "";
     } else if (pref.s !== "off") {
       // your usual subtitle language, else the track the file itself marks as default / forced
       const lang = pref.s
@@ -1478,14 +1619,17 @@
       if (token !== P.token) return;
       P.tracks = { ffmpeg: false, audio: [], subs: [] };
       renderMenu();
+      const saved = store.get(trkKey(it), null);
+      if (saved && P.localSubs.some((x) => x.id === saved.s))
+        chooseSub(saved.s, true);
     }
   }
 
   /* ----- the Audio / Subtitles and Speed menus ----- */
-  const mrow = (k, v, label, on, note, disabled) =>
+  const mrow = (k, v, label, on, note, disabled, busy) =>
     `<button class="mrow" type="button" data-k="${k}" data-v="${esc(v)}"${
       disabled ? " disabled" : ""
-    }><span class="chk">${on ? "✓" : ""}</span><span>${esc(label)}</span>${
+    }><span class="chk">${busy ? '<i class="mspin"></i>' : on ? "✓" : ""}</span><span>${esc(label)}</span>${
       note ? `<small>${esc(note)}</small>` : ""
     }</button>`;
 
@@ -1514,6 +1658,8 @@
           a.label,
           P.aIdx === a.i,
           conv && P.aIdx !== a.i ? "converts once" : "",
+          false,
+          P.aIdx === a.i && !!P.msgA,
         );
       });
     }
@@ -1526,12 +1672,27 @@
         P.sId === s.id,
         s.ok ? (s.default ? "default" : "") : "image-based",
         !s.ok,
+        P.sId === s.id && !!P.msgS,
       );
     });
-    if (T && !T.subs.length) {
+    P.localSubs.forEach((s) => {
+      h += mrow("s", s.id, s.name, P.sId === s.id, "this device");
+    });
+    if (T && !T.subs.length && !P.localSubs.length) {
       h +=
-        '<div class="mnote">No subtitles found. Put a .srt or .vtt file with the same name next to the video.</div>';
+        '<div class="mnote">No subtitles found next to the video. Add one from this device below.</div>';
     }
+    h += mrow(
+      "addsub",
+      "",
+      "Add subtitle file (.srt / .vtt)…",
+      false,
+      "",
+      false,
+      !!P.msgS && !P.sId,
+    );
+    if (P.localSubs.some((x) => x.id === P.sId))
+      h += mrow("rmsub", "", "Remove this subtitle file", false);
     h += '<div class="mh">Subtitle style</div>';
     h += mstep("Size", prefs.subSize + "%", "size");
     h += mstep(
@@ -1574,7 +1735,11 @@
     renderMenu();
     const m = $("#pmenu");
     m.hidden = false;
-    m.style.bottom = $("#pctrl").offsetHeight + 6 + "px";
+    const ctrlH = $("#pctrl").offsetHeight + 6;
+    m.style.bottom = ctrlH + "px";
+    // never taller than the space between the top bar and the controls
+    m.style.maxHeight =
+      Math.max(140, playerEl.clientHeight - ctrlH - 64) + "px";
     wake();
   }
 
@@ -1591,6 +1756,8 @@
     const v = b.dataset.v;
     if (k === "a") chooseAudio(Number(v));
     else if (k === "s") chooseSub(v);
+    else if (k === "addsub") $("#subFile").click();
+    else if (k === "rmsub") removeLocalSub();
     else if (k === "speed") {
       setSpeed(Number(v));
       closeMenu();
@@ -1617,11 +1784,15 @@
   function cycleSub() {
     const T = P.tracks;
     if (!T) return;
-    const ids = [""].concat(T.subs.filter((s) => s.ok).map((s) => s.id));
+    const ids = [""]
+      .concat(T.subs.filter((s) => s.ok).map((s) => s.id))
+      .concat(P.localSubs.map((s) => s.id));
     const next = ids[(ids.indexOf(P.sId) + 1) % ids.length];
     chooseSub(next);
-    const s = T.subs.find((x) => x.id === next);
-    hud(s ? s.label : "Subtitles off", "Subtitles");
+    const s =
+      T.subs.find((x) => x.id === next) ||
+      P.localSubs.find((x) => x.id === next);
+    hud(s ? s.label || s.name : "Subtitles off", "Subtitles");
   }
 
   function cycleAudio() {
@@ -1815,6 +1986,7 @@
     P.aIdx = 0;
     P.sId = "";
     P.cues = [];
+    P.localSubs = [];
     P.delay = 0;
     P.fit = 0;
     P.bright = 1;
@@ -1872,7 +2044,8 @@
     paintSeek(0);
     paintBuf();
     $("#pdur").textContent = "0:00";
-    spin(true);
+    spin(true, "Loading movie…", true);
+    restoreLocalSubs(it);
     wake();
 
     vid.onloadedmetadata = () => {
