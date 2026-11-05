@@ -1,0 +1,29 @@
+# --- secrets -------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- generated caches (rebuilt automatically by the server) ---------------
+films_thumbnails/
+short_video_thumbnails/
+photo_thumbnails/
+photo_previews/
+subtitle_cache/
+audio_track_cache/
+# old names, from before the caches were renamed
+poster_cache/
+thumb_cache/
+*.tmp
+
+# --- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- editor / OS ------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
