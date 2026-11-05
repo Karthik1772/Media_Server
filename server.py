@@ -1,9 +1,9 @@
 """
 Streamify  -  run with:  python server.py
 
-Serves the folder you start it from, with:
-  * a responsive Netflix-style web UI (phone / tablet / laptop)
-    -> files live in ./ui  (index.html, style.css, app.js)
+Serves the configured media folder with:
+  * a responsive Next.js static-export UI built automatically from ./ui
+  * one-command startup: python server.py
   * HTTP Range support (video seeking works)
   * one-line colored request logs + session summary
 No extra packages needed (Python 3.8+).
@@ -17,6 +17,8 @@ import json
 import os
 import re
 import socket
+import subprocess
+import shutil
 import sys
 import threading
 import time
@@ -53,7 +55,9 @@ APP_NAME = (
     "Streamify"  # shown in the console banner, the browser tab and the page header
 )
 UI_DIR = os.path.join(BASE_DIR, "ui")
-UI_PREFIX = "/__ui/"  # URL prefix that maps to the ./ui folder
+UI_PREFIX = "/__ui/"  # legacy URL prefix
+NEXT_OUT_DIR = os.path.join(UI_DIR, "out")
+MEDIA_PREFIX = "/media/"
 
 # ---- who may connect --------------------------------------------------------
 # True: connections are accepted only from this PC and from private network addresses
@@ -275,15 +279,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ---------- serve ./ui files under /__ui/ ----------
     def translate_path(self, path):
         p = unquote(path.split("?", 1)[0].split("#", 1)[0])
-        if p.startswith(UI_PREFIX):
-            rel = [
-                x for x in p[len(UI_PREFIX) :].split("/") if x not in ("", ".", "..")
-            ]
-            return os.path.join(UI_DIR, *rel)
         cached = posters.cache_path(p)  # /__film/, /__short/, /__photo/, /__audio/ ...
         if cached:
             return cached
-        return super().translate_path(path)
+        if p.startswith(MEDIA_PREFIX):
+            rel = os.path.normpath(p[len(MEDIA_PREFIX):]).lstrip(os.sep)
+            candidate = os.path.abspath(os.path.join(os.getcwd(), rel))
+            media_root = os.path.abspath(os.getcwd())
+            if candidate != media_root and not candidate.startswith(media_root + os.sep):
+                return os.path.join(media_root, "__invalid_media_path__")
+            protected = os.path.abspath(BASE_DIR)
+            if candidate == protected or candidate.startswith(protected + os.sep):
+                return os.path.join(media_root, "__invalid_media_path__")
+            return candidate
+        if p.startswith(UI_PREFIX):
+            p = "/" + p[len(UI_PREFIX):]
+        # The Next.js static export is served from the same origin as the Python APIs.
+        rel = p.lstrip("/") or "index.html"
+        rel = os.path.normpath(rel)
+        if rel == ".." or rel.startswith(".." + os.sep):
+            return os.path.join(NEXT_OUT_DIR, "__not_found__")
+        candidate = os.path.join(NEXT_OUT_DIR, rel)
+        if os.path.isdir(candidate):
+            candidate = os.path.join(candidate, "index.html")
+        return candidate
 
     def send_header(self, keyword, value):
         k = keyword.lower()
@@ -548,7 +567,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if not parsed.path.startswith("/__api/"):
+        if not (parsed.path.startswith("/__api/") or parsed.path == "/api/files"):
             return super().do_GET()
         self._api_start(parsed)
         q = urllib.parse.parse_qs(parsed.query)
@@ -557,6 +576,63 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return (q.get(name) or [""])[0].strip()
 
         try:
+            if parsed.path == "/api/files":
+                requested = arg("path") or "/"
+                rel = unquote(requested).replace("\\\\", "/").strip("/")
+                target = os.path.abspath(os.path.join(os.getcwd(), rel))
+                media_root = os.path.abspath(os.getcwd())
+                if target != media_root and not target.startswith(media_root + os.sep):
+                    return self._json_response({"error": "Invalid path"}, 400)
+                protected = os.path.abspath(BASE_DIR)
+                if target == protected or target.startswith(protected + os.sep):
+                    return self._json_response({"error": "Folder not found"}, 404)
+                if not os.path.isdir(target):
+                    return self._json_response({"error": "Folder not found"}, 404)
+                items = []
+                try:
+                    names = os.listdir(target)
+                except OSError:
+                    return self._json_response({"error": "No permission to list directory"}, 403)
+                for name in names:
+                    if name.startswith(".") or name.lower() in HIDDEN:
+                        continue
+                    full = os.path.join(target, name)
+                    if os.path.normcase(os.path.abspath(full)) == os.path.normcase(BASE_DIR):
+                        continue
+                    try:
+                        st = os.stat(full)
+                    except OSError:
+                        continue
+                    is_dir = os.path.isdir(full)
+                    if is_dir:
+                        kind, count = "folder", 0
+                        try:
+                            count = sum(1 for child in os.listdir(full)
+                                        if not child.startswith(".") and child.lower() not in HIDDEN)
+                        except OSError:
+                            pass
+                    else:
+                        content_type = self.guess_type(full)
+                        kind = ("video" if content_type.startswith("video/") else
+                                "image" if content_type.startswith("image/") else
+                                "audio" if content_type.startswith("audio/") else "file")
+                    relative = os.path.relpath(full, os.getcwd()).replace(os.sep, "/")
+                    item = {
+                        "name": name, "dir": is_dir, "kind": kind,
+                        "size": 0 if is_dir else st.st_size,
+                        "mtime": int(st.st_mtime), "count": count if is_dir else 0,
+                        "url": ("/media/" + quote(relative, safe="/")) + ("/" if is_dir else ""),
+                    }
+                    if not is_dir and kind in ("video", "image"):
+                        key = relative
+                        if kind == "video":
+                            item.update(posters.describe_video(key, name, st.st_size, st.st_mtime))
+                        else:
+                            item.update(posters.describe_image(key, name, st.st_size, st.st_mtime))
+                    items.append(item)
+                return self._json_response({
+                    "path": "/" + rel if rel else "/", "items": items, "app": APP_NAME
+                })
             if parsed.path == "/__api/poster-search":
                 try:
                     results = posters.poster_candidates(
@@ -644,8 +720,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.emit()
 
     def is_program_file(self):
-        if self.req_path.startswith((UI_PREFIX,) + posters.CACHE_PREFIXES):
-            return False  # these prefixes map to the few files the page really needs
+        if self.req_path.startswith((UI_PREFIX, MEDIA_PREFIX, "/_next/")) or self.req_path in ("/", "/index.html"):
+            return False
+        if self.req_path.startswith(posters.CACHE_PREFIXES):
+            return False
         p = os.path.normcase(os.path.abspath(self.fs_path))
         b = os.path.normcase(BASE_DIR)
         return p == b or p.startswith(b + os.sep)
@@ -842,19 +920,45 @@ def init_runtime(root):
     )
 
 
+def build_frontend():
+    """Build the Next.js static export when it is missing or older than its sources."""
+    package_json = os.path.join(UI_DIR, "package.json")
+    output_index = os.path.join(NEXT_OUT_DIR, "index.html")
+    if not os.path.isfile(package_json):
+        raise SystemExit(f"{RED}✖ Missing {package_json}{R}")
+    source_files = []
+    for folder in ("src",):
+        for current, _, files in os.walk(os.path.join(UI_DIR, folder)):
+            source_files.extend(os.path.join(current, name) for name in files)
+    source_files.extend(os.path.join(UI_DIR, name) for name in
+                        ("package.json", "package-lock.json", "next.config.ts"))
+    newest_source = max((os.path.getmtime(p) for p in source_files if os.path.isfile(p)), default=0)
+    if os.path.isfile(output_index) and os.path.getmtime(output_index) >= newest_source:
+        return
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not shutil.which("node") or not npm:
+        raise SystemExit(f"{RED}✖ Node.js and npm are required to build the Next.js UI. Install Node.js, then run python server.py again.{R}")
+    node_modules = os.path.join(UI_DIR, "node_modules")
+    if not os.path.isdir(node_modules):
+        lockfile = os.path.join(UI_DIR, "package-lock.json")
+        command = [npm, "ci"] if os.path.isfile(lockfile) else [npm, "install"]
+        print(f"{CYN}◆ Installing frontend dependencies...{R}", flush=True)
+        subprocess.run(command, cwd=UI_DIR, check=True)
+    print(f"{CYN}◆ Building Next.js frontend...{R}", flush=True)
+    subprocess.run([npm, "run", "build"], cwd=UI_DIR, check=True)
+    if not os.path.isfile(output_index):
+        raise SystemExit(f"{RED}✖ Next.js build completed without producing ui/out/index.html{R}")
+
+
 if __name__ == "__main__":
-    missing = [
-        f
-        for f in ("index.html", "style.css", "app.js")
-        if not os.path.isfile(os.path.join(UI_DIR, f))
-    ]
-    if missing:
-        print(f"{RED}✖ Missing UI files in {UI_DIR}: {', '.join(missing)}{R}")
-        raise SystemExit(1)
     root = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else MEDIA_ROOT
     if not os.path.isdir(root):
         print(f"{RED}✖ Folder not found: {root}{R}")
         raise SystemExit(1)
+    try:
+        build_frontend()
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"{RED}✖ Frontend build failed (exit code {exc.returncode}).{R}") from exc
     init_runtime(root)
     banner(local_ip())
     posters.start_background()  # poster + preview scans run in the background

@@ -116,6 +116,10 @@ export function MediaCard({
     if (item.kind === "video") {
       return (
         <div className="w-full h-full relative flex items-center justify-center bg-black/60 overflow-hidden">
+          {item.poster && !videoLoaded && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={item.poster} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          )}
           {videoPreviews && (
             <video
               ref={videoRef}
@@ -160,7 +164,7 @@ export function MediaCard({
         <div className="w-full h-full relative flex items-center justify-center bg-black/40 overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={item.url}
+            src={item.thumb || item.view || item.url}
             alt={item.name}
             loading="lazy"
             decoding="async"

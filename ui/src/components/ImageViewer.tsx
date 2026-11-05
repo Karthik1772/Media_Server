@@ -20,7 +20,7 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
     [currentIndex - 1, currentIndex + 1].forEach((idx) => {
       if (items[idx]) {
         const img = new Image();
-        img.src = items[idx].url;
+        img.src = items[idx].view || items[idx].url;
       }
     });
   }, [currentIndex, items]);
@@ -91,7 +91,7 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
       {/* Main Image */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={current.url}
+        src={current.view || current.url}
         alt={current.name}
         className="max-h-[85vh] max-w-[90vw] object-contain rounded-lg shadow-2xl transition-transform"
       />
