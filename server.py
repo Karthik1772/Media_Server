@@ -297,6 +297,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().send_header(keyword, value)
 
     def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+        self.send_header("Access-Control-Allow-Headers", "*")
         rp = getattr(self, "req_path", "")
         ok = (getattr(self, "status", 0) or 0) < 400  # never cache an error page
         if ok and rp.startswith(UI_PREFIX + "assets/"):
@@ -431,22 +434,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 stats["errors"] += 1
 
     # ---------- custom folder page ----------
-    def list_directory(self, path):
-        if self.req_path.startswith(UI_PREFIX):
-            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
-            return None
-        try:
-            with open(os.path.join(UI_DIR, "index.html"), encoding="utf-8") as fh:
-                template = fh.read()
-        except OSError:
-            self.send_error(
-                HTTPStatus.INTERNAL_SERVER_ERROR, "ui/index.html is missing"
-            )
-            return None
+    def scan_directory_items(self, path):
         try:
             names = os.listdir(path)
         except OSError:
-            self.send_error(HTTPStatus.NOT_FOUND, "No permission to list directory")
             return None
 
         items = []
@@ -495,6 +486,41 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 else:  # thumbnail + viewer copy (the original is used if there is none)
                     item.update(posters.describe_image(key, n, st.st_size, st.st_mtime))
             items.append(item)
+        return items
+
+    def list_directory(self, path):
+        if self.req_path.startswith(UI_PREFIX):
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
+            return None
+
+        items = self.scan_directory_items(path)
+        if items is None:
+            self.send_error(HTTPStatus.NOT_FOUND, "No permission to list directory")
+            return None
+
+        accept_header = self.headers.get("Accept", "")
+        wants_json = "application/json" in accept_header or "json=1" in getattr(self, "path", "")
+
+        template = None
+        index_file = os.path.join(UI_DIR, "index.html")
+        if not wants_json and os.path.isfile(index_file):
+            try:
+                with open(index_file, encoding="utf-8") as fh:
+                    template = fh.read()
+            except OSError:
+                template = None
+
+        if wants_json or template is None:
+            body = json.dumps(
+                {"path": self.req_path, "items": items, "app": APP_NAME},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return io.BytesIO(body)
 
         data = json.dumps(
             {"path": self.req_path, "items": items, "app": APP_NAME}, ensure_ascii=False
@@ -546,6 +572,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.quiet = True
         self.req_path = parsed.path
 
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.end_headers()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if not parsed.path.startswith("/__api/"):
@@ -557,6 +587,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return (q.get(name) or [""])[0].strip()
 
         try:
+            if parsed.path == "/__api/browse":
+                subpath = unquote(arg("path")).lstrip("/\\").replace("\\", "/")
+                target = os.path.normpath(os.path.join(os.getcwd(), subpath))
+                # Security: ensure target stays inside working directory
+                base_cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+                norm_target = os.path.normcase(os.path.abspath(target))
+                if not (norm_target == base_cwd or norm_target.startswith(base_cwd + os.sep)):
+                    return self._json_response({"error": "Forbidden"}, 403)
+                if not os.path.isdir(target):
+                    return self._json_response({"error": "Folder not found"}, 404)
+                items = self.scan_directory_items(target)
+                if items is None:
+                    return self._json_response({"error": "Cannot read folder"}, 403)
+                req_path = "/" + subpath + ("/" if subpath and not subpath.endswith("/") else "")
+                return self._json_response({"path": req_path, "items": items, "app": APP_NAME})
             if parsed.path == "/__api/poster-search":
                 try:
                     results = posters.poster_candidates(
@@ -843,13 +888,14 @@ def init_runtime(root):
 
 
 if __name__ == "__main__":
-    missing = [
+    legacy_missing = [
         f
         for f in ("index.html", "style.css", "app.js")
         if not os.path.isfile(os.path.join(UI_DIR, f))
     ]
-    if missing:
-        print(f"{RED}✖ Missing UI files in {UI_DIR}: {', '.join(missing)}{R}")
+    has_nextjs = os.path.isdir(os.path.join(BASE_DIR, "UI")) or os.path.isdir(os.path.join(BASE_DIR, "ui"))
+    if legacy_missing and not has_nextjs:
+        print(f"{RED}✖ Missing UI files in {UI_DIR}: {', '.join(legacy_missing)}{R}")
         raise SystemExit(1)
     root = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else MEDIA_ROOT
     if not os.path.isdir(root):
