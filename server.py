@@ -199,6 +199,17 @@ def local_ip():
         return "127.0.0.1"
 
 
+def wait_for_port(host, port, timeout=6.0):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return True
+        except (OSError, socket.error):
+            time.sleep(0.15)
+    return False
+
+
 def start_frontend():
     global frontend_proc
     ui_dir = os.path.join(BASE_DIR, "UI")
@@ -209,6 +220,10 @@ def start_frontend():
 
     pkg_json = os.path.join(ui_dir, "package.json")
     if not os.path.isfile(pkg_json):
+        return None
+
+    # Check if already running on port 3000
+    if wait_for_port("127.0.0.1", FRONTEND_PORT, timeout=0.2):
         return None
 
     npm_bin = shutil.which("npm.cmd") if os.name == "nt" else shutil.which("npm")
@@ -222,14 +237,18 @@ def start_frontend():
     if os.name == "nt":
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
 
+    log_path = os.path.join(ui_dir, "frontend.log")
     try:
+        log_fh = open(log_path, "w", encoding="utf-8")
         frontend_proc = subprocess.Popen(
             [npm_bin, "run", script],
             cwd=ui_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=log_fh,
             creationflags=creationflags,
         )
+        # Wait up to 6 seconds for Next.js to be ready and listening
+        wait_for_port("127.0.0.1", FRONTEND_PORT, timeout=6.0)
         return frontend_proc
     except Exception as exc:
         with print_lock:
@@ -632,28 +651,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 pass
 
         req = urllib.request.Request(target_url, data=body, headers=req_headers, method=self.command)
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                self.send_response(resp.status)
-                for header, value in resp.getheaders():
+
+        # Retry up to 4 attempts in case Next.js is still completing initialization
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    self.send_response(resp.status)
+                    for header, value in resp.getheaders():
+                        if header.lower() not in ("transfer-encoding", "connection", "content-length"):
+                            self.send_header(header, value)
+                    content = resp.read()
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                    self.logged = True
+                    return None
+            except urllib.error.HTTPError as exc:
+                self.send_response(exc.code)
+                for header, value in exc.headers.items():
                     if header.lower() not in ("transfer-encoding", "connection", "content-length"):
                         self.send_header(header, value)
-                content = resp.read()
+                content = exc.read()
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)
-        except urllib.error.HTTPError as exc:
-            self.send_response(exc.code)
-            for header, value in exc.headers.items():
-                if header.lower() not in ("transfer-encoding", "connection", "content-length"):
-                    self.send_header(header, value)
-            content = exc.read()
-            self.send_header("Content-Length", str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception as exc:
-            self.send_error(HTTPStatus.BAD_GATEWAY, f"Frontend service unavailable: {exc}")
-        self.logged = True
+                self.logged = True
+                return None
+            except (urllib.error.URLError, ConnectionRefusedError, OSError) as exc:
+                if attempt < 3:
+                    time.sleep(0.4)
+                    continue
+                self.send_error(HTTPStatus.BAD_GATEWAY, f"Frontend service warming up, please refresh: {exc}")
+                self.logged = True
+                return None
         return None
 
     # ---------- cache / player API ----------

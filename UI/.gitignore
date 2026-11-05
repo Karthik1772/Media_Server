@@ -29,3 +29,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+
+# local log files
+frontend.log
+*.log
