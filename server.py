@@ -1,15 +1,16 @@
 """
 Streamify  -  run with:  python server.py
 
-Serves the folder you start it from, with:
-  * a responsive Netflix-style web UI (phone / tablet / laptop)
-    -> files live in ./ui  (index.html, style.css, app.js)
+Serves the whole drive this project lives on (E:\\ if the project is on E:) with:
+  * the Next.js DEV server UI from ./ui - started automatically and proxied, with live reload
+  * one-command startup: python server.py
   * HTTP Range support (video seeking works)
   * one-line colored request logs + session summary
-No extra packages needed (Python 3.8+).
+Python needs no extra packages (3.8+); the UI needs Node.js 20.9+.
 """
 
-import html
+import atexit
+import http.client
 import http.server
 import io
 import ipaddress
@@ -17,6 +18,9 @@ import json
 import os
 import re
 import socket
+import subprocess
+import shutil
+import signal
 import sys
 import threading
 import time
@@ -53,7 +57,14 @@ APP_NAME = (
     "Streamify"  # shown in the console banner, the browser tab and the page header
 )
 UI_DIR = os.path.join(BASE_DIR, "ui")
-UI_PREFIX = "/__ui/"  # URL prefix that maps to the ./ui folder
+# The UI is the Next.js DEV server (npm run dev). Python starts it on 127.0.0.1 and proxies
+# every non-API request to it, so there is still a single public port (PORT) and the
+# "local network only" rule below also protects the dev server.
+DEV_HOST = "127.0.0.1"
+DEV_PORT_PREFERRED = 3000  # another free port is used automatically if this one is busy
+DEV_PORT = DEV_PORT_PREFERRED
+dev_proc = None
+MEDIA_PREFIX = "/media/"
 
 # ---- who may connect --------------------------------------------------------
 # True: connections are accepted only from this PC and from private network addresses
@@ -106,11 +117,18 @@ load_env(os.path.join(BASE_DIR, ".env"))
 # Without it, Wikipedia is used for posters.
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 
-# Folder that gets shared. By default it is the folder ABOVE this one, so with
-# E:\Streamify\server.py you share E:\  (Films, Web Series, photos ...).
-# Change it to any path you like, e.g.  MEDIA_ROOT = r"E:\"
-# You can also override it per run:   python server.py "D:\Movies"
-MEDIA_ROOT = os.path.dirname(BASE_DIR)
+def default_media_root():
+    """The drive this project is on: E:\\Media_Server\\server.py shares ALL of E:\\ and nothing
+    outside it (other drives are refused). Where there are no drive letters (macOS/Linux)
+    the folder above this one is shared instead."""
+    drive, _ = os.path.splitdrive(BASE_DIR)
+    if drive:
+        return drive + os.sep
+    return os.path.dirname(BASE_DIR)
+
+
+# You can still override it per run:   python server.py "D:\\Movies"
+MEDIA_ROOT = default_media_root()
 HIDDEN = {
     "$recycle.bin",
     "system volume information",
@@ -126,6 +144,33 @@ HIDDEN = {
     "subtitle_cache",
     "audio_track_cache",
 }
+
+
+
+def inside(base, target):
+    """True if `target` is `base` or sits below it. Works for drive roots such as E:\\ (where
+    a plain startswith(base + os.sep) check wrongly fails) and refuses other drives."""
+    try:
+        b = os.path.normcase(os.path.abspath(base))
+        t = os.path.normcase(os.path.abspath(target))
+        return os.path.commonpath([b, t]) == b
+    except ValueError:  # different drive
+        return False
+
+
+def is_hidden_rel(rel):
+    """True if any part of a path (relative to the shared root) is a dot-folder or one of
+    the HIDDEN system / cache folders - they are neither listed nor downloadable."""
+    for part in rel.replace("\\", "/").split("/"):
+        if part not in ("", ".") and (part.startswith(".") or part.lower() in HIDDEN):
+            return True
+    return False
+
+
+def root_label(root):
+    drive, _ = os.path.splitdrive(root)
+    return drive or os.path.basename(root.rstrip("\\/")) or root
+
 
 print_lock = threading.Lock()
 stats = {"requests": 0, "bytes": 0, "aborted": 0, "errors": 0}
@@ -200,6 +245,7 @@ def banner(ip):
         ("Folder", os.getcwd()),
         ("Phone", f"http://{ip}:{PORT}"),
         ("Local", f"http://localhost:{PORT}"),
+        ("UI", f"Next.js dev server (live reload) on :{DEV_PORT}"),
         (
             "Access",
             (
@@ -272,18 +318,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".json": "application/json",
     }
 
-    # ---------- serve ./ui files under /__ui/ ----------
+    # ---------- map a backend URL to a file ----------
     def translate_path(self, path):
         p = unquote(path.split("?", 1)[0].split("#", 1)[0])
-        if p.startswith(UI_PREFIX):
-            rel = [
-                x for x in p[len(UI_PREFIX) :].split("/") if x not in ("", ".", "..")
-            ]
-            return os.path.join(UI_DIR, *rel)
         cached = posters.cache_path(p)  # /__film/, /__short/, /__photo/, /__audio/ ...
         if cached:
             return cached
-        return super().translate_path(path)
+        media_root = os.path.abspath(os.getcwd())
+        invalid = os.path.join(media_root, "__invalid_media_path__")
+        if not p.startswith(MEDIA_PREFIX):
+            return invalid
+        rel = p[len(MEDIA_PREFIX):].replace("\\", "/").lstrip("/")
+        candidate = os.path.abspath(os.path.join(media_root, rel))
+        if not inside(media_root, candidate):  # also refuses other drives
+            return invalid
+        if inside(BASE_DIR, candidate):  # the program's own folder is never shared
+            return invalid
+        if is_hidden_rel(os.path.relpath(candidate, media_root)):
+            return invalid
+        return candidate
 
     def send_header(self, keyword, value):
         k = keyword.lower()
@@ -299,15 +352,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         rp = getattr(self, "req_path", "")
         ok = (getattr(self, "status", 0) or 0) < 400  # never cache an error page
-        if ok and rp.startswith(UI_PREFIX + "assets/"):
-            self.send_header(
-                "Cache-Control", "public, max-age=86400"
-            )  # static images: a day
-        elif ok and rp.startswith(posters.CACHE_PREFIXES):
+        if ok and rp.startswith(posters.CACHE_PREFIXES):
             # file names contain a hash of the picture / size / date, so a new file = a new URL
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-        elif rp.startswith(UI_PREFIX):
-            self.send_header("Cache-Control", "no-cache")  # edits show up on refresh
         super().end_headers()
         code = getattr(self, "status", None) or 0
         if LOG_LIFECYCLE and 0 < code < 400 and not getattr(self, "quiet", True):
@@ -430,90 +477,136 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if ev == "ERROR":
                 stats["errors"] += 1
 
-    # ---------- custom folder page ----------
+    # ---------- folder URLs are not pages any more (the UI lists folders via /api/files) ----------
     def list_directory(self, path):
-        if self.req_path.startswith(UI_PREFIX):
-            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
-            return None
-        try:
-            with open(os.path.join(UI_DIR, "index.html"), encoding="utf-8") as fh:
-                template = fh.read()
-        except OSError:
-            self.send_error(
-                HTTPStatus.INTERNAL_SERVER_ERROR, "ui/index.html is missing"
-            )
-            return None
-        try:
-            names = os.listdir(path)
-        except OSError:
-            self.send_error(HTTPStatus.NOT_FOUND, "No permission to list directory")
-            return None
+        self.send_error(HTTPStatus.NOT_FOUND, "Folders are browsed in the app, not as pages")
+        return None
 
-        items = []
-        for n in names:
-            if n.startswith(".") or n.lower() in HIDDEN:
-                continue
-            full = os.path.join(path, n)
-            if os.path.normcase(os.path.abspath(full)) == os.path.normcase(BASE_DIR):
-                continue  # don't show the media-server program folder itself
-            try:
-                st = os.stat(full)
-            except OSError:
-                continue
-            isdir = os.path.isdir(full)
-            if isdir:
-                kind, count = "folder", 0
-                try:
-                    count = sum(1 for x in os.listdir(full) if not x.startswith("."))
-                except OSError:
-                    pass
-            else:
-                count = 0
-                ct = self.guess_type(full)
-                kind = (
-                    "video"
-                    if ct.startswith("video/")
-                    else (
-                        "image"
-                        if ct.startswith("image/")
-                        else "audio" if ct.startswith("audio/") else "file"
-                    )
-                )
-            item = {
-                "name": n,
-                "dir": isdir,
-                "kind": kind,
-                "size": 0 if isdir else st.st_size,
-                "mtime": int(st.st_mtime),
-                "count": count,
-                "url": quote(n) + ("/" if isdir else ""),
-            }
-            if kind in ("video", "image"):
-                key = os.path.relpath(full, os.getcwd()).replace(os.sep, "/")
-                if kind == "video":
-                    item.update(posters.describe_video(key, n, st.st_size, st.st_mtime))
-                else:  # thumbnail + viewer copy (the original is used if there is none)
-                    item.update(posters.describe_image(key, n, st.st_size, st.st_mtime))
-            items.append(item)
+    # ---------- UI = Next.js dev server, reached through this server ----------
+    def is_backend(self, path):
+        """URLs answered by Python itself; everything else belongs to the Next.js dev server."""
+        return path.startswith(("/api/", "/__api/", MEDIA_PREFIX) + posters.CACHE_PREFIXES)
 
-        data = json.dumps(
-            {"path": self.req_path, "items": items, "app": APP_NAME}, ensure_ascii=False
+    def same_origin(self):
+        """Browsers send Origin on cross-site POSTs: refuse any that isn't this very server."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        return urllib.parse.urlparse(origin).netloc.lower() == (self.headers.get("Host") or "").lower()
+
+    _HOP_BY_HOP = {
+        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+        "trailers", "transfer-encoding", "upgrade", "content-length", "proxy-connection",
+    }
+
+    def _dev_unavailable(self):
+        page = (
+            b"<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2>"
+            b"<body style='font:16px system-ui;background:#0b0a1a;color:#ddd;padding:3rem'>"
+            b"Starting the Next.js dev server&hellip; this page refreshes by itself."
         )
-        data = data.replace("<", "\\u003c")
-        folder = self.req_path.strip("/").split("/")[-1]
-        title = f"{folder} · {APP_NAME}" if folder else APP_NAME
-        payload = (
-            template.replace("__TITLE__", html.escape(title))
-            .replace("__APPNAME__", html.escape(APP_NAME))
-            .replace("__DATA__", data)
-        ).encode("utf-8", "replace")
+        self.close_connection = True
+        return self._send_bytes(page, "text/html; charset=utf-8", status=503)
 
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        return io.BytesIO(payload)
+    def proxy_to_dev(self):
+        """Forward the request to the Next.js dev server and stream the answer back."""
+        self.quiet = True  # the dev server prints its own request log
+        self.req_path = urllib.parse.urlparse(self.path).path
+        if (self.headers.get("Upgrade") or "").lower() == "websocket":
+            return self._tunnel_to_dev()  # hot-reload channel
+        body = None
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > 0:
+            body = self.rfile.read(length)
+        headers = {
+            k: v for k, v in self.headers.items()
+            if k.lower() not in self._HOP_BY_HOP and k.lower() != "accept-encoding"
+        }
+        headers["Accept-Encoding"] = "identity"
+        conn = http.client.HTTPConnection(DEV_HOST, DEV_PORT, timeout=180)
+        try:
+            conn.request(self.command, self.path, body=body, headers=headers)
+            resp = conn.getresponse()
+        except (OSError, http.client.HTTPException):
+            conn.close()
+            return self._dev_unavailable()
+        try:
+            status = resp.status
+            bodyless = self.command == "HEAD" or status in (204, 304) or 100 <= status < 200
+            length_hdr = resp.getheader("Content-Length")
+            chunked = not bodyless and length_hdr is None
+            self.send_response(status, resp.reason)
+            for k, v in resp.getheaders():
+                if k.lower() not in self._HOP_BY_HOP:
+                    self.send_header(k, v)
+            if length_hdr is not None and status not in (204, 304):
+                self.send_header("Content-Length", length_hdr)
+            elif chunked:
+                self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            if bodyless:
+                return
+            while True:
+                chunk = resp.read1(65536)
+                if not chunk:
+                    break
+                if chunked:
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+                else:
+                    self.wfile.write(chunk)
+            if chunked:
+                self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (OSError, http.client.HTTPException):
+            self.close_connection = True  # browser went away or the dev server died mid-way
+        finally:
+            conn.close()
+
+    def _tunnel_to_dev(self):
+        """WebSocket (Next.js hot reload): replay the handshake, then copy bytes both ways."""
+        try:
+            upstream = socket.create_connection((DEV_HOST, DEV_PORT), timeout=10)
+        except OSError:
+            return self._dev_unavailable()
+        upstream.settimeout(None)
+        lines = [f"{self.command} {self.path} HTTP/1.1"]
+        lines += [f"{k}: {v}" for k, v in self.headers.items()]
+        upstream.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1", "replace"))
+        client = self.connection
+        self.close_connection = True
+
+        def pump(src, dst):
+            try:
+                while True:
+                    data = src.recv(65536)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except OSError:
+                pass
+            finally:
+                for sock in (src, dst):
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+        back = threading.Thread(target=pump, args=(upstream, client), daemon=True)
+        back.start()
+        pump(client, upstream)
+        back.join(timeout=2)
+        upstream.close()
+
+    def _other_method(self):
+        if self.is_backend(urllib.parse.urlparse(self.path).path):
+            self.close_connection = True
+            return self._json_response({"error": "Method not allowed"}, 405)
+        return self.proxy_to_dev()
+
+    do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _other_method
 
     # ---------- cache / player API ----------
     def _send_bytes(self, body, ctype, cache="no-store", status=200):
@@ -548,7 +641,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if not parsed.path.startswith("/__api/"):
+        if not self.is_backend(parsed.path):
+            return self.proxy_to_dev()
+        if not (parsed.path.startswith("/__api/") or parsed.path == "/api/files"):
             return super().do_GET()
         self._api_start(parsed)
         q = urllib.parse.parse_qs(parsed.query)
@@ -557,6 +652,65 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return (q.get(name) or [""])[0].strip()
 
         try:
+            if parsed.path == "/api/files":
+                requested = arg("path") or "/"
+                rel = unquote(requested).replace("\\", "/").strip("/")
+                media_root = os.path.abspath(os.getcwd())
+                target = os.path.abspath(os.path.join(media_root, rel))
+                if not inside(media_root, target):  # also refuses other drives
+                    return self._json_response({"error": "Invalid path"}, 400)
+                if inside(BASE_DIR, target) or is_hidden_rel(os.path.relpath(target, media_root)):
+                    return self._json_response({"error": "Folder not found"}, 404)
+                if not os.path.isdir(target):
+                    return self._json_response({"error": "Folder not found"}, 404)
+                items = []
+                try:
+                    names = os.listdir(target)
+                except OSError:
+                    return self._json_response({"error": "No permission to list directory"}, 403)
+                for name in names:
+                    if name.startswith(".") or name.lower() in HIDDEN:
+                        continue
+                    full = os.path.join(target, name)
+                    if os.path.normcase(os.path.abspath(full)) == os.path.normcase(BASE_DIR):
+                        continue
+                    try:
+                        st = os.stat(full)
+                    except OSError:
+                        continue
+                    if getattr(st, "st_file_attributes", 0) & 0x6:  # Windows hidden / system
+                        continue
+                    is_dir = os.path.isdir(full)
+                    if is_dir:
+                        kind, count = "folder", 0
+                        try:
+                            count = sum(1 for child in os.listdir(full)
+                                        if not child.startswith(".") and child.lower() not in HIDDEN)
+                        except OSError:
+                            pass
+                    else:
+                        content_type = self.guess_type(full)
+                        kind = ("video" if content_type.startswith("video/") else
+                                "image" if content_type.startswith("image/") else
+                                "audio" if content_type.startswith("audio/") else "file")
+                    relative = os.path.relpath(full, os.getcwd()).replace(os.sep, "/")
+                    item = {
+                        "name": name, "dir": is_dir, "kind": kind,
+                        "size": 0 if is_dir else st.st_size,
+                        "mtime": int(st.st_mtime), "count": count if is_dir else 0,
+                        "url": ("/media/" + quote(relative, safe="/")) + ("/" if is_dir else ""),
+                    }
+                    if not is_dir and kind in ("video", "image"):
+                        key = relative
+                        if kind == "video":
+                            item.update(posters.describe_video(key, name, st.st_size, st.st_mtime))
+                        else:
+                            item.update(posters.describe_image(key, name, st.st_size, st.st_mtime))
+                    items.append(item)
+                return self._json_response({
+                    "path": "/" + rel if rel else "/", "items": items, "app": APP_NAME,
+                    "root": root_label(media_root),
+                })
             if parsed.path == "/__api/poster-search":
                 try:
                     results = posters.poster_candidates(
@@ -612,7 +766,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        if not self.is_backend(parsed.path):
+            return self.proxy_to_dev()
         self._api_start(parsed)
+        if not self.same_origin():
+            self.close_connection = True
+            return self._json_response({"error": "Cross-origin request refused"}, 403)
         try:
             if parsed.path == "/__api/poster-select":
                 data = json.loads(self._read_body(64 * 1024).decode("utf-8"))
@@ -640,15 +799,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ---------- request handling ----------
     def do_HEAD(self):
+        if not self.is_backend(urllib.parse.urlparse(self.path).path):
+            return self.proxy_to_dev()
         super().do_HEAD()
         self.emit()
-
-    def is_program_file(self):
-        if self.req_path.startswith((UI_PREFIX,) + posters.CACHE_PREFIXES):
-            return False  # these prefixes map to the few files the page really needs
-        p = os.path.normcase(os.path.abspath(self.fs_path))
-        b = os.path.normcase(BASE_DIR)
-        return p == b or p.startswith(b + os.sep)
 
     def send_head(self):
         self.t0 = time.time()
@@ -663,24 +817,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.resp_logged = False
         self.req_path = unquote(self.path.split("?")[0])
         self.fs_path = self.translate_path(self.path)
-        self.quiet = self.req_path.startswith(
-            (UI_PREFIX,) + posters.CACHE_PREFIXES
-        ) or self.req_path.endswith("favicon.ico")
+        self.quiet = self.req_path.startswith(posters.CACHE_PREFIXES) or self.req_path.endswith(
+            "favicon.ico"
+        )
         rng = self.headers.get("Range")
         if LOG_LIFECYCLE and not self.quiet:
             self.log_req_line()
-
-        # The program's own folder (server.py, posters.py, caches) is never shared
-        if self.req_path.startswith(("/__api/",)) is False and self.is_program_file():
-            self.send_error(404, "File not found")
-            self.emit()
-            return None
-
-        # The ui folder is for its css/js only - never list it or serve its index
-        if self.req_path.startswith(UI_PREFIX) and os.path.isdir(self.fs_path):
-            self.send_error(404, "File not found")
-            self.emit()
-            return None
 
         # No Range header, or not a file -> default behaviour
         if not rng or not os.path.isfile(self.fs_path):
@@ -842,26 +984,124 @@ def init_runtime(root):
     )
 
 
+def _npm_install_needed():
+    modules = os.path.join(UI_DIR, "node_modules")
+    marker = os.path.join(modules, ".package-lock.json")  # npm touches it on every install
+    if not os.path.isfile(marker):
+        return True
+    wanted = [os.path.join(UI_DIR, n) for n in ("package.json", "package-lock.json")]
+    newest = max((os.path.getmtime(p) for p in wanted if os.path.isfile(p)), default=0)
+    return newest > os.path.getmtime(marker)
+
+
+def _pick_dev_port():
+    for candidate in (DEV_PORT_PREFERRED, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind((DEV_HOST, candidate))
+            except OSError:
+                continue
+            return probe.getsockname()[1]
+    raise SystemExit(f"{RED}\u2716 No free port for the Next.js dev server.{R}")
+
+
+def _relay_dev_output(proc):
+    for line in proc.stdout:
+        line = ANSI.sub("", line).rstrip()
+        if line.strip():
+            with print_lock:
+                print(f"  {DIM}next \u2502 {line}{R}", flush=True)
+
+
+def stop_dev_server():
+    proc = dev_proc
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":  # npm.cmd -> node: kill the whole tree
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (OSError, subprocess.SubprocessError):
+        proc.kill()
+
+
+def start_dev_server(lan_ip):
+    """Install the UI dependencies if needed, then run `npm run dev` (never a production build)."""
+    global DEV_PORT, dev_proc
+    if not os.path.isfile(os.path.join(UI_DIR, "package.json")):
+        raise SystemExit(f"{RED}\u2716 Missing {os.path.join(UI_DIR, 'package.json')}{R}")
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not shutil.which("node") or not npm:
+        raise SystemExit(
+            f"{RED}\u2716 Node.js 20.9+ and npm are required for the UI. "
+            f"Install Node.js, then run python server.py again.{R}"
+        )
+    if _npm_install_needed():
+        lock = os.path.join(UI_DIR, "package-lock.json")
+        command = [npm, "ci"] if os.path.isfile(lock) and not os.path.isdir(
+            os.path.join(UI_DIR, "node_modules")) else [npm, "install"]
+        print(f"{CYN}\u25c6 Installing frontend dependencies ({' '.join(command[1:])})...{R}", flush=True)
+        try:
+            subprocess.run(command, cwd=UI_DIR, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(f"{RED}\u2716 npm install failed (exit code {exc.returncode}).{R}") from exc
+
+    DEV_PORT = _pick_dev_port()
+    env = dict(os.environ, STREAMIFY_LAN_IP=lan_ip, NEXT_TELEMETRY_DISABLED="1")
+    print(f"{CYN}\u25c6 Starting Next.js dev server on {DEV_HOST}:{DEV_PORT}...{R}", flush=True)
+    kwargs = {"start_new_session": True} if os.name != "nt" else {}
+    dev_proc = subprocess.Popen(
+        [npm, "run", "dev", "--", "-H", DEV_HOST, "-p", str(DEV_PORT)],
+        cwd=UI_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", **kwargs,
+    )
+    atexit.register(stop_dev_server)
+    threading.Thread(target=_relay_dev_output, args=(dev_proc,), daemon=True, name="next-log").start()
+
+    deadline = time.time() + 120
+    while True:
+        if dev_proc.poll() is not None:
+            raise SystemExit(f"{RED}\u2716 The Next.js dev server stopped (exit code {dev_proc.returncode}).{R}")
+        try:
+            socket.create_connection((DEV_HOST, DEV_PORT), timeout=1).close()
+            break
+        except OSError:
+            if time.time() > deadline:
+                stop_dev_server()
+                raise SystemExit(f"{RED}\u2716 The Next.js dev server did not start within 2 minutes.{R}")
+            time.sleep(0.4)
+
+    def warm_up():  # compile the home page now so the first visitor does not wait for it
+        conn = http.client.HTTPConnection(DEV_HOST, DEV_PORT, timeout=120)
+        try:
+            conn.request("GET", "/")
+            conn.getresponse().read()
+        except (OSError, http.client.HTTPException):
+            pass
+        finally:
+            conn.close()
+
+    threading.Thread(target=warm_up, daemon=True, name="next-warmup").start()
+
+
 if __name__ == "__main__":
-    missing = [
-        f
-        for f in ("index.html", "style.css", "app.js")
-        if not os.path.isfile(os.path.join(UI_DIR, f))
-    ]
-    if missing:
-        print(f"{RED}✖ Missing UI files in {UI_DIR}: {', '.join(missing)}{R}")
-        raise SystemExit(1)
     root = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else MEDIA_ROOT
     if not os.path.isdir(root):
-        print(f"{RED}✖ Folder not found: {root}{R}")
+        print(f"{RED}\u2716 Folder not found: {root}{R}")
         raise SystemExit(1)
     init_runtime(root)
-    banner(local_ip())
-    posters.start_background()  # poster + preview scans run in the background
-    threading.Thread(
-        target=console_commands, daemon=True, name="console-commands"
-    ).start()
+    ip = local_ip()
     with Server(("0.0.0.0", PORT), Handler) as httpd:
+        start_dev_server(ip)
+        banner(ip)
+        posters.start_background()  # poster + preview scans run in the background
+        threading.Thread(
+            target=console_commands, daemon=True, name="console-commands"
+        ).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
@@ -869,7 +1109,9 @@ if __name__ == "__main__":
             print(f"\n{DIM}{'─' * LINE_W}{R}")
             print(
                 f"{B}Session summary{R}  "
-                f"{stats['requests']} requests · {human(stats['bytes'])} sent · "
-                f"{ABORT_COL}{stats['aborted']} stopped{R} · "
-                f"{RED}{stats['errors']} errors{R} · {mins:.1f} min"
+                f"{stats['requests']} requests \u00b7 {human(stats['bytes'])} sent \u00b7 "
+                f"{ABORT_COL}{stats['aborted']} stopped{R} \u00b7 "
+                f"{RED}{stats['errors']} errors{R} \u00b7 {mins:.1f} min"
             )
+        finally:
+            stop_dev_server()

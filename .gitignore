@@ -27,3 +27,8 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Next.js build artifacts and dependencies
+ui/node_modules/
+ui/.next/
+ui/out/
