@@ -6,6 +6,7 @@ import type { NextConfig } from "next";
 const lanIp = process.env.STREAMIFY_LAN_IP;
 
 const nextConfig: NextConfig = {
+  output: "export",
   images: { unoptimized: true },
   allowedDevOrigins: [
     ...(lanIp ? [lanIp] : []),

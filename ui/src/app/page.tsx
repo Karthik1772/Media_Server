@@ -6,13 +6,19 @@ import { MediaCard } from "../components/MediaCard";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { ImageViewer } from "../components/ImageViewer";
 import { Toast } from "../components/Toast";
-import { SearchIcon, GridIcon, ListIcon, VideoIcon } from "../components/Icons";
+import {
+  SearchIcon,
+  GridIcon,
+  ListIcon,
+  VideoIcon,
+  ChevronRightIcon,
+} from "../components/Icons";
 
 function safeDecode(part: string) {
   try {
     return decodeURIComponent(part);
   } catch {
-    return part; // a folder name such as "100%" is not valid percent-encoding
+    return part;
   }
 }
 
@@ -20,9 +26,8 @@ export default function Home() {
   const [currentPath, setCurrentPath] = useState<string>("");
   const [data, setData] = useState<DirectoryListing | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState<number>(0);
   const [search, setSearch] = useState<string>("");
+  const [filterType, setFilterType] = useState<"all" | "video" | "image" | "audio" | "folder">("all");
   const [sortOption, setSortOption] = useState<"name" | "date" | "size">("name");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [videoPreviews, setVideoPreviews] = useState<boolean>(true);
@@ -82,53 +87,32 @@ export default function Home() {
     } catch {}
   }, []);
 
-  const savePref = (key: string, value: string) => {
-    try {
-      localStorage.setItem(key, value);
-    } catch {}
-  };
-
-  // Fetch directory listing (a newer navigation cancels the older request)
-  useEffect(() => {
-    const controller = new AbortController();
+  // Fetch directory listing
+  const fetchListing = useCallback(async (path: string) => {
     setLoading(true);
-    setError(null);
+    try {
+      const endpoint = `/api/files?path=${encodeURIComponent(path ? "/" + path : "/")}`;
+      const res = await fetch(endpoint);
+      if (!res.ok) throw new Error("Failed to load directory");
+      const json: DirectoryListing = await res.json();
+      setData(json);
+    } catch (err) {
+      console.error(err);
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-    const endpoint = `/api/files?path=${encodeURIComponent(
-      currentPath ? "/" + currentPath : "/"
-    )}`;
-
-    fetch(endpoint, { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "Failed to load this folder");
-        }
-        return res.json() as Promise<DirectoryListing>;
-      })
-      .then((json) => {
-        setData(json);
-        setLoading(false);
-      })
-      .catch((err: Error) => {
-        if (err.name === "AbortError") return;
-        console.error(err);
-        setData(null);
-        setError(err.message || "Failed to load this folder");
-        setLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [currentPath, reloadKey]);
+  useEffect(() => {
+    fetchListing(currentPath);
+  }, [currentPath, fetchListing]);
 
   // Navigate to folder
   const navigateTo = (newPath: string) => {
     const clean = newPath.replace(/^\/+/, "").replace(/\/+$/, "");
-    window.location.hash = clean
-      ? "/" + clean.split("/").map(encodeURIComponent).join("/")
-      : "";
+    window.location.hash = clean ? `/${clean}` : "";
     setCurrentPath(clean);
-    setSearch("");
   };
 
   // Video and Image lists for overlay cycling
@@ -147,6 +131,16 @@ export default function Home() {
     if (!data) return [];
     let list = [...data.items];
 
+    // Category filter
+    if (filterType !== "all") {
+      if (filterType === "folder") {
+        list = list.filter((it) => it.dir);
+      } else {
+        list = list.filter((it) => !it.dir && it.kind === filterType);
+      }
+    }
+
+    // Search query
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((it) => it.name.toLowerCase().includes(q));
@@ -162,7 +156,7 @@ export default function Home() {
     });
 
     return list;
-  }, [data, search, sortOption]);
+  }, [data, filterType, search, sortOption]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -202,7 +196,7 @@ export default function Home() {
     return parts.join("  ·  ") || "Empty folder";
   }, [data]);
 
-  // Handle Card Click
+  // Handle Item Click
   const handleOpenItem = (item: FileItem) => {
     if (item.dir) {
       const sub = currentPath ? `${currentPath}/${item.name}` : item.name;
@@ -221,68 +215,73 @@ export default function Home() {
     }
   };
 
-  // Breadcrumbs builder
   const pathParts = currentPath.split("/").filter(Boolean);
-  const rootLabel = data?.root || "Home";
-  const rootTitle = data?.root
-    ? data.root.endsWith(":")
-      ? `${data.root} Drive`
-      : data.root
-    : "Media Library";
-
-  const crumbBase =
-    "px-3.5 py-1.5 rounded-full text-xs sm:text-sm whitespace-nowrap transition-all";
-  const crumbActive = "glass-subtle text-white font-semibold";
-  const crumbIdle = "glass-btn";
 
   return (
-    <div className="min-h-screen flex flex-col text-zinc-100">
-      {/* Floating glass header */}
-      <header className="sticky top-3 z-30 mx-3 sm:mx-6 mt-3 glass-strong rounded-2xl flex items-center justify-between gap-4 px-4 sm:px-6 py-3">
+    <div className="min-h-screen flex flex-col bg-[#090a0f] text-zinc-100">
+      {/* Top Navigation Bar */}
+      <header className="sticky top-0 z-30 flex items-center justify-between gap-4 px-4 sm:px-8 py-3.5 glass-header">
+        {/* Brand */}
         <div
           onClick={() => navigateTo("")}
           className="flex items-center gap-2.5 cursor-pointer select-none group"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#ff2d78] to-[#7c3aed] flex items-center justify-center shadow-lg shadow-pink-500/30 ring-1 ring-white/30 group-hover:scale-105 transition-transform">
-            <span className="text-white text-xs font-black">▶</span>
+          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-600/30 group-hover:bg-blue-500 transition-colors">
+            <span className="text-xs font-black ml-0.5">▶</span>
           </div>
-          <span className="text-lg font-bold tracking-tight">
-            <span className="gradient-text">Media</span> Server
+          <span className="text-base font-semibold tracking-tight text-white">
+            {data?.app || "Streamify"}
           </span>
         </div>
 
-        {/* Search Bar */}
-        <div className="flex-1 max-w-md relative flex items-center">
-          <SearchIcon className="w-4 h-4 text-zinc-300 absolute left-3.5 pointer-events-none" />
+        {/* Search */}
+        <div className="flex-1 max-w-sm relative flex items-center">
+          <SearchIcon className="w-3.5 h-3.5 text-zinc-500 absolute left-3.5 pointer-events-none" />
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search this folder..."
-            className="glass-input w-full pl-10 pr-4 py-2 text-xs sm:text-sm rounded-full placeholder:text-zinc-400 text-zinc-50"
+            placeholder="Search in this folder..."
+            className="w-full pl-9 pr-8 py-1.5 text-xs rounded-full bg-white/[0.04] border border-white/[0.07] focus:border-blue-500/50 focus:bg-white/[0.07] focus:outline-none transition-all placeholder:text-zinc-500 text-zinc-200"
           />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 text-xs text-zinc-500 hover:text-white"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Main Container */}
+      {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6">
-        {/* Breadcrumb Navigation */}
-        <nav className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+        {/* Breadcrumb Path Bar */}
+        <nav className="flex items-center gap-1.5 text-xs overflow-x-auto pb-2 scrollbar-none text-zinc-400">
           <button
             onClick={() => navigateTo("")}
-            className={`${crumbBase} ${pathParts.length === 0 ? crumbActive : crumbIdle}`}
+            className={`px-2.5 py-1 rounded-md transition-colors ${
+              pathParts.length === 0
+                ? "bg-white/[0.08] text-white font-medium"
+                : "hover:text-white"
+            }`}
           >
-            {rootLabel}
+            Root
           </button>
           {pathParts.map((part, index) => {
             const sub = pathParts.slice(0, index + 1).join("/");
             const isLast = index === pathParts.length - 1;
             return (
               <React.Fragment key={sub}>
-                <span className="text-zinc-400">/</span>
+                <ChevronRightIcon className="w-3 h-3 text-zinc-600 flex-shrink-0" />
                 <button
                   onClick={() => navigateTo(sub)}
-                  className={`${crumbBase} truncate max-w-[180px] ${isLast ? crumbActive : crumbIdle}`}
+                  className={`px-2.5 py-1 rounded-md truncate max-w-[180px] transition-colors ${
+                    isLast
+                      ? "bg-white/[0.08] text-white font-medium"
+                      : "hover:text-white"
+                  }`}
                 >
                   {part}
                 </button>
@@ -291,29 +290,46 @@ export default function Home() {
           })}
         </nav>
 
-        {/* Section Header & Toolbar */}
-        <div className="flex flex-wrap items-end justify-between gap-4 mt-5 mb-6">
+        {/* Header Title + Stats & Controls */}
+        <div className="flex flex-wrap items-end justify-between gap-4 mt-3 mb-6">
           <div>
-            <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight drop-shadow-[0_2px_12px_rgba(0,0,0,0.4)]">
-              {pathParts.length > 0 ? pathParts[pathParts.length - 1] : rootTitle}
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
+              {pathParts.length > 0 ? pathParts[pathParts.length - 1] : "Media Library"}
             </h1>
-            <p className="text-xs sm:text-sm text-zinc-300/80 mt-1.5 font-medium">{stats}</p>
+            <p className="text-xs text-zinc-500 mt-1 font-medium">{stats}</p>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            {/* Category Filter Pills */}
+            <div className="hidden md:flex items-center gap-1 bg-white/[0.03] p-1 rounded-lg border border-white/[0.06] text-xs">
+              {(["all", "video", "image", "audio", "folder"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setFilterType(t)}
+                  className={`px-2.5 py-1 rounded-md capitalize transition-all ${
+                    filterType === t
+                      ? "bg-white/[0.1] text-white font-medium shadow-sm"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {t === "all" ? "All" : t === "video" ? "Videos" : t === "image" ? "Photos" : t === "audio" ? "Audio" : "Folders"}
+                </button>
+              ))}
+            </div>
+
             {/* Sort Selector */}
             <select
               value={sortOption}
               onChange={(e) => {
                 const val = e.target.value as "name" | "date" | "size";
                 setSortOption(val);
-                savePref("media_sort", val);
+                localStorage.setItem("media_sort", val);
               }}
-              className="glass-btn px-3.5 py-2 rounded-xl text-xs sm:text-sm cursor-pointer focus:outline-none"
+              className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-xs text-zinc-300 focus:outline-none cursor-pointer hover:bg-white/[0.07] transition-colors"
             >
-              <option value="name">Name</option>
-              <option value="date">Newest</option>
-              <option value="size">Largest</option>
+              <option value="name" className="bg-[#12131a]">Name</option>
+              <option value="date" className="bg-[#12131a]">Newest</option>
+              <option value="size" className="bg-[#12131a]">Largest</option>
             </select>
 
             {/* Video Previews Toggle */}
@@ -321,71 +337,62 @@ export default function Home() {
               onClick={() => {
                 const next = !videoPreviews;
                 setVideoPreviews(next);
-                savePref("media_previews", String(next));
-                showToast(`Video previews ${next ? "enabled" : "disabled"}`);
+                localStorage.setItem("media_previews", String(next));
+                showToast(`Video previews ${next ? "on" : "off"}`);
               }}
-              className={`glass-btn p-2.5 rounded-xl ${videoPreviews ? "is-active" : ""}`}
-              title="Toggle video previews"
+              className={`p-1.5 rounded-lg border transition-all ${
+                videoPreviews
+                  ? "bg-blue-600/20 border-blue-500/30 text-blue-400"
+                  : "bg-white/[0.04] border-white/[0.07] text-zinc-400 hover:text-white"
+              }`}
+              title="Toggle video preview frames"
             >
               <VideoIcon className="w-4 h-4" />
             </button>
 
             {/* View Mode Toggle */}
-            <div className="glass-subtle flex rounded-xl p-1 gap-1">
+            <div className="flex rounded-lg bg-white/[0.03] border border-white/[0.06] p-0.5">
               <button
                 onClick={() => {
                   setViewMode("grid");
-                  savePref("media_view", "grid");
+                  localStorage.setItem("media_view", "grid");
                 }}
-                className={`glass-btn p-2 rounded-lg border-transparent ${viewMode === "grid" ? "is-active" : "bg-transparent"}`}
+                className={`p-1.5 rounded-md transition-all ${
+                  viewMode === "grid"
+                    ? "bg-white/[0.1] text-white shadow-sm"
+                    : "text-zinc-400 hover:text-white"
+                }`}
                 title="Grid view"
               >
-                <GridIcon className="w-4 h-4" />
+                <GridIcon className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => {
                   setViewMode("list");
-                  savePref("media_view", "list");
+                  localStorage.setItem("media_view", "list");
                 }}
-                className={`glass-btn p-2 rounded-lg border-transparent ${viewMode === "list" ? "is-active" : "bg-transparent"}`}
+                className={`p-1.5 rounded-md transition-all ${
+                  viewMode === "list"
+                    ? "bg-white/[0.1] text-white shadow-sm"
+                    : "text-zinc-400 hover:text-white"
+                }`}
                 title="List view"
               >
-                <ListIcon className="w-4 h-4" />
+                <ListIcon className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* Content Listing */}
+        {/* Items Listing */}
         {loading ? (
-          <div className="glass rounded-3xl py-24 flex flex-col items-center justify-center gap-3 text-zinc-300">
-            <div className="w-9 h-9 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm font-medium">Scanning media...</span>
-          </div>
-        ) : error ? (
-          <div className="glass rounded-3xl py-20 px-6 flex flex-col items-center gap-4 text-center animate-fadeIn">
-            <p className="text-base font-semibold text-white">Couldn&apos;t open this folder</p>
-            <p className="text-sm text-zinc-300 max-w-md">{error}</p>
-            <div className="flex gap-2.5">
-              <button
-                onClick={() => setReloadKey((k) => k + 1)}
-                className="glass-btn is-active px-5 py-2 rounded-xl text-sm font-semibold"
-              >
-                Try again
-              </button>
-              {currentPath && (
-                <button
-                  onClick={() => navigateTo("")}
-                  className="glass-btn px-5 py-2 rounded-xl text-sm font-semibold"
-                >
-                  Go to {rootLabel}
-                </button>
-              )}
-            </div>
+          <div className="py-24 flex flex-col items-center justify-center gap-3 text-zinc-500">
+            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-medium tracking-wide">Loading media...</span>
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="glass rounded-3xl py-24 text-center text-zinc-300 animate-fadeIn">
-            <p className="text-base font-medium">
+          <div className="py-24 text-center text-zinc-500">
+            <p className="text-sm font-medium">
               {search ? `No items found matching "${search}"` : "This folder is empty."}
             </p>
           </div>
@@ -393,8 +400,8 @@ export default function Home() {
           <div
             className={
               viewMode === "grid"
-                ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-5"
-                : "flex flex-col gap-2.5"
+                ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4"
+                : "flex flex-col gap-1.5"
             }
           >
             {filteredItems.map((item) => (
@@ -416,7 +423,7 @@ export default function Home() {
           items={videoItems}
           currentIndex={activeVideoIndex}
           onClose={() => setActiveVideoIndex(null)}
-          onSelectIndex={setActiveVideoIndex}
+          onSelectIndex={(idx) => setActiveVideoIndex(idx)}
           onShowToast={showToast}
         />
       )}
@@ -427,7 +434,7 @@ export default function Home() {
           items={imageItems}
           currentIndex={activeImageIndex}
           onClose={() => setActiveImageIndex(null)}
-          onSelectIndex={setActiveImageIndex}
+          onSelectIndex={(idx) => setActiveImageIndex(idx)}
         />
       )}
 

@@ -56,62 +56,62 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
   };
 
   if (!current) return null;
+  const imageSource = current.view || current.url;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overlay-scrim select-none animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center glass-overlay select-none animate-fadeIn"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       {/* Top action bar */}
-      <div className="glass-strong absolute top-3 sm:top-4 inset-x-3 sm:inset-x-5 rounded-2xl px-4 py-2.5 flex items-center justify-between z-10">
-        <div className="text-sm font-semibold text-white truncate pr-4">
+      <div className="absolute top-0 inset-x-0 p-4 flex items-center justify-between z-10 bg-gradient-to-b from-black/80 to-transparent">
+        <div className="text-xs sm:text-sm font-medium text-zinc-300 truncate pr-4">
           {current.name}
         </div>
         <button
           onClick={onClose}
-          className="glass-btn p-2.5 rounded-full"
+          className="p-2 rounded-full bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 text-white transition-all"
           title="Close (Esc)"
         >
           <CloseIcon className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Prev button */}
+      {/* Prev arrow */}
       {currentIndex > 0 && (
         <button
           onClick={() => onSelectIndex(currentIndex - 1)}
-          className="glass-btn absolute left-4 top-1/2 -translate-y-1/2 p-3.5 rounded-full z-10 hidden sm:block"
+          className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/60 hover:bg-black/80 border border-white/10 text-white transition-all z-10 hidden sm:block"
           title="Previous"
         >
-          <ArrowLeftIcon className="w-6 h-6" />
+          <ArrowLeftIcon className="w-5 h-5" />
         </button>
       )}
 
       {/* Main Image */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={current.view || current.url}
+        src={imageSource}
         alt={current.name}
-        className="max-h-[78vh] max-w-[90vw] object-contain rounded-3xl ring-1 ring-white/25 shadow-[0_30px_80px_rgba(0,0,0,0.6)] transition-transform"
+        className="max-h-[85vh] max-w-[92vw] object-contain rounded-lg shadow-2xl transition-transform"
       />
 
-      {/* Next button */}
+      {/* Next arrow */}
       {currentIndex < items.length - 1 && (
         <button
           onClick={() => onSelectIndex(currentIndex + 1)}
-          className="glass-btn absolute right-4 top-1/2 -translate-y-1/2 p-3.5 rounded-full z-10 hidden sm:block"
+          className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/60 hover:bg-black/80 border border-white/10 text-white transition-all z-10 hidden sm:block"
           title="Next"
         >
-          <ArrowRightIcon className="w-6 h-6" />
+          <ArrowRightIcon className="w-5 h-5" />
         </button>
       )}
 
-      {/* Caption & Counter */}
-      <div className="glass-strong absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-xs sm:text-sm text-zinc-100 font-medium">
+      {/* Counter */}
+      <div className="absolute bottom-4 inset-x-0 text-center text-xs text-zinc-400 font-medium tracking-wider">
         {currentIndex + 1} / {items.length}
       </div>
     </div>
   );
 }
-

@@ -2,21 +2,18 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Media Server",
-  description: "Browse and stream your media files",
+  title: "Streamify",
+  description: "Modern private media browser & streaming center",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">
-        {/* Colour field that the glass panels blur and refract */}
-        <div className="bg-scene" aria-hidden="true">
-          <span className="blob blob-1" />
-          <span className="blob blob-2" />
-          <span className="blob blob-3" />
-          <span className="blob blob-4" />
-        </div>
+    <html lang="en" className="dark h-full">
+      <body className="min-h-full flex flex-col relative z-10 selection:bg-blue-600/30 selection:text-white">
         {children}
       </body>
     </html>
