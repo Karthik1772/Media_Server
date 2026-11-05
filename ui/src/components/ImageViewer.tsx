@@ -59,18 +59,18 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md select-none animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center overlay-scrim select-none animate-fadeIn"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       {/* Top action bar */}
-      <div className="absolute top-0 inset-x-0 p-4 flex items-center justify-between z-10 bg-gradient-to-b from-black/80 to-transparent">
-        <div className="text-sm font-medium text-white/80 truncate pr-4">
+      <div className="glass-strong absolute top-3 sm:top-4 inset-x-3 sm:inset-x-5 rounded-2xl px-4 py-2.5 flex items-center justify-between z-10">
+        <div className="text-sm font-semibold text-white truncate pr-4">
           {current.name}
         </div>
         <button
           onClick={onClose}
-          className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+          className="glass-btn p-2.5 rounded-full"
           title="Close (Esc)"
         >
           <CloseIcon className="w-5 h-5" />
@@ -81,7 +81,7 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
       {currentIndex > 0 && (
         <button
           onClick={() => onSelectIndex(currentIndex - 1)}
-          className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10 hidden sm:block"
+          className="glass-btn absolute left-4 top-1/2 -translate-y-1/2 p-3.5 rounded-full z-10 hidden sm:block"
           title="Previous"
         >
           <ArrowLeftIcon className="w-6 h-6" />
@@ -93,14 +93,14 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
       <img
         src={current.view || current.url}
         alt={current.name}
-        className="max-h-[85vh] max-w-[90vw] object-contain rounded-lg shadow-2xl transition-transform"
+        className="max-h-[78vh] max-w-[90vw] object-contain rounded-3xl ring-1 ring-white/25 shadow-[0_30px_80px_rgba(0,0,0,0.6)] transition-transform"
       />
 
       {/* Next button */}
       {currentIndex < items.length - 1 && (
         <button
           onClick={() => onSelectIndex(currentIndex + 1)}
-          className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10 hidden sm:block"
+          className="glass-btn absolute right-4 top-1/2 -translate-y-1/2 p-3.5 rounded-full z-10 hidden sm:block"
           title="Next"
         >
           <ArrowRightIcon className="w-6 h-6" />
@@ -108,7 +108,7 @@ export function ImageViewer({ items, currentIndex, onClose, onSelectIndex }: Ima
       )}
 
       {/* Caption & Counter */}
-      <div className="absolute bottom-4 inset-x-0 text-center text-xs sm:text-sm text-zinc-400 font-medium">
+      <div className="glass-strong absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-xs sm:text-sm text-zinc-100 font-medium">
         {currentIndex + 1} / {items.length}
       </div>
     </div>

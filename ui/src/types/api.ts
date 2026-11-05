@@ -24,5 +24,6 @@ export interface DirectoryListing {
   path: string;
   items: FileItem[];
   app?: string;
+  /** Label of the shared root, e.g. "E:" */
+  root?: string;
 }
-

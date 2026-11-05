@@ -100,13 +100,13 @@ export function MediaCard({
         <div
           className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden"
           style={{
-            background: `linear-gradient(135deg, hsl(${hue}, 65%, 28%), hsl(${
+            background: `linear-gradient(135deg, hsla(${hue}, 85%, 62%, 0.55), hsla(${
               (hue + 45) % 360
-            }, 70%, 14%))`,
+            }, 80%, 45%, 0.18))`,
           }}
         >
-          <FolderIcon className="w-10 h-10 text-white/90 drop-shadow-md" />
-          <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-black/50 text-white/90 backdrop-blur-md border border-white/10">
+          <FolderIcon className="w-10 h-10 text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)]" />
+          <span className="absolute bottom-2 right-2 glass-subtle px-2 py-0.5 rounded-full text-[10px] font-semibold text-white">
             {item.count} {item.count === 1 ? "item" : "items"}
           </span>
         </div>
@@ -115,7 +115,7 @@ export function MediaCard({
 
     if (item.kind === "video") {
       return (
-        <div className="w-full h-full relative flex items-center justify-center bg-black/60 overflow-hidden">
+        <div className="w-full h-full relative flex items-center justify-center bg-black/40 overflow-hidden">
           {item.poster && !videoLoaded && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={item.poster} alt="" className="absolute inset-0 w-full h-full object-cover" />
@@ -135,20 +135,20 @@ export function MediaCard({
           )}
 
           {/* Fallback & Play Icon */}
-          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/60 via-transparent to-transparent">
-            <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform">
+          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/45 via-transparent to-transparent">
+            <div className="glass w-11 h-11 rounded-full flex items-center justify-center text-white group-hover:scale-110 transition-transform">
               <PlayIcon className="w-4 h-4 ml-0.5" />
             </div>
           </div>
 
           {/* Extension Badge */}
-          <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white/90 backdrop-blur-md border border-white/10">
+          <span className="absolute bottom-2 right-2 glass-subtle px-2 py-0.5 rounded-full text-[10px] font-bold text-white">
             {ext}
           </span>
 
           {/* Progress Bar */}
           {progress > 0 && (
-            <div className="absolute bottom-0 inset-x-0 h-1 bg-white/20">
+            <div className="absolute bottom-0 inset-x-0 h-1 bg-white/25">
               <div
                 className="h-full bg-gradient-to-r from-[#ff2d78] to-[#7c3aed]"
                 style={{ width: `${progress}%` }}
@@ -170,7 +170,7 @@ export function MediaCard({
             decoding="async"
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
-          <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white/90 backdrop-blur-md border border-white/10">
+          <span className="absolute bottom-2 right-2 glass-subtle px-2 py-0.5 rounded-full text-[10px] font-bold text-white">
             {ext}
           </span>
         </div>
@@ -179,9 +179,9 @@ export function MediaCard({
 
     if (item.kind === "audio") {
       return (
-        <div className="w-full h-full flex flex-col items-center justify-center relative bg-gradient-to-br from-teal-900/60 to-indigo-950/80">
+        <div className="w-full h-full flex flex-col items-center justify-center relative bg-gradient-to-br from-teal-400/35 to-indigo-500/20">
           <AudioIcon className="w-10 h-10 text-teal-300 drop-shadow-md" />
-          <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white/90 backdrop-blur-md border border-white/10">
+          <span className="absolute bottom-2 right-2 glass-subtle px-2 py-0.5 rounded-full text-[10px] font-bold text-white">
             {ext}
           </span>
         </div>
@@ -189,9 +189,9 @@ export function MediaCard({
     }
 
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center relative bg-zinc-900/60">
+      <div className="w-full h-full flex flex-col items-center justify-center relative bg-white/[0.06]">
         <FileIcon className="w-10 h-10 text-zinc-400" />
-        <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white/90 backdrop-blur-md border border-white/10">
+        <span className="absolute bottom-2 right-2 glass-subtle px-2 py-0.5 rounded-full text-[10px] font-bold text-white">
           {ext || "FILE"}
         </span>
       </div>
@@ -206,21 +206,29 @@ export function MediaCard({
     ? "Folder"
     : `${formatBytes(item.size)} · ${formatDate(item.mtime)}`;
 
+  const activate = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onOpen(item);
+    }
+  };
+
   // LIST VIEW
   if (viewMode === "list") {
     return (
       <div
+        role="button"
+        tabIndex={0}
         onClick={() => onOpen(item)}
-        className="group flex items-center gap-4 p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer backdrop-blur-xl"
+        onKeyDown={activate}
+        className="group glass glass-card flex items-center gap-4 p-2.5 rounded-2xl cursor-pointer"
       >
-        <div className="w-14 h-11 rounded-lg overflow-hidden flex-shrink-0">
+        <div className="w-16 h-11 rounded-xl overflow-hidden flex-shrink-0 ring-1 ring-white/15">
           {renderThumbnail()}
         </div>
         <div className="flex-1 min-w-0 pr-2">
-          <div className="text-sm font-semibold text-zinc-100 truncate group-hover:text-white transition-colors">
-            {item.name}
-          </div>
-          <div className="text-xs text-zinc-400 mt-0.5 truncate">{subText}</div>
+          <div className="text-sm font-semibold text-zinc-50 truncate">{item.name}</div>
+          <div className="text-xs text-zinc-300/80 mt-0.5 truncate">{subText}</div>
         </div>
       </div>
     );
@@ -229,24 +237,28 @@ export function MediaCard({
   // GRID VIEW
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={() => onOpen(item)}
-      className="group flex flex-col rounded-2xl overflow-hidden bg-[#13131c]/60 hover:bg-[#1c1c28]/80 border border-white/[0.07] hover:border-[#7c3aed]/50 transition-all duration-300 cursor-pointer shadow-lg hover:shadow-2xl hover:shadow-[#7c3aed]/10 hover:-translate-y-1 backdrop-blur-xl"
+      onKeyDown={activate}
+      className="group glass glass-card flex flex-col rounded-3xl overflow-hidden cursor-pointer"
     >
-      <div className="w-full aspect-video overflow-hidden">
-        {renderThumbnail()}
+      <div className="p-2 pb-0">
+        <div className="w-full aspect-video rounded-2xl overflow-hidden ring-1 ring-white/15">
+          {renderThumbnail()}
+        </div>
       </div>
-      <div className="p-3 flex flex-col justify-between flex-1">
+      <div className="px-3.5 pt-3 pb-3.5 flex flex-col justify-between flex-1">
         <div
-          className="text-xs sm:text-sm font-semibold text-zinc-100 line-clamp-2 leading-snug group-hover:text-white transition-colors"
+          className="text-xs sm:text-sm font-semibold text-zinc-50 line-clamp-2 leading-snug"
           title={item.name}
         >
           {displayName}
         </div>
-        <div className="text-[11px] text-zinc-400 mt-2 truncate font-medium">
+        <div className="text-[11px] text-zinc-300/75 mt-2 truncate font-medium">
           {subText}
         </div>
       </div>
     </div>
   );
 }
-
