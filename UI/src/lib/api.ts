@@ -1,14 +1,11 @@
 import { DirectoryResponse, TracksResponse, PosterSearchResponse } from "./types";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:2904";
+const BACKEND_URL = typeof window !== "undefined" ? "" : (process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:2904");
 
 export function resolveServerUrl(path: string): string {
   if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  if (path.startsWith("/")) {
-    return `${BACKEND_URL}${path}`;
-  }
-  return `${BACKEND_URL}/${path}`;
+  return path.startsWith("/") ? path : `/${path}`;
 }
 
 export async function fetchDirectory(path: string = "/"): Promise<DirectoryResponse> {

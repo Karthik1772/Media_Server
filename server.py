@@ -9,6 +9,7 @@ Serves the folder you start it from, with:
 No extra packages needed (Python 3.8+).
 """
 
+import atexit
 import html
 import http.server
 import io
@@ -16,7 +17,9 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -42,6 +45,8 @@ ABORT_COL = "\033[38;5;208m"  # orange: different from yellow RESPONSE, red ERRO
 CYN = "\033[96m"
 
 PORT = 2904
+FRONTEND_PORT = 3000
+frontend_proc = None
 CHUNK = 64 * 1024
 NAME_W = 36  # visible width of the PATH column
 RES_W = 66  # visible width of the RESULT column
@@ -192,6 +197,65 @@ def local_ip():
         return ip
     except OSError:
         return "127.0.0.1"
+
+
+def start_frontend():
+    global frontend_proc
+    ui_dir = os.path.join(BASE_DIR, "UI")
+    if not os.path.isdir(ui_dir):
+        ui_dir = os.path.join(BASE_DIR, "ui")
+    if not os.path.isdir(ui_dir):
+        return None
+
+    pkg_json = os.path.join(ui_dir, "package.json")
+    if not os.path.isfile(pkg_json):
+        return None
+
+    npm_bin = shutil.which("npm.cmd") if os.name == "nt" else shutil.which("npm")
+    if not npm_bin:
+        npm_bin = "npm"
+
+    has_build = os.path.isdir(os.path.join(ui_dir, ".next"))
+    script = "start" if has_build else "dev"
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    try:
+        frontend_proc = subprocess.Popen(
+            [npm_bin, "run", script],
+            cwd=ui_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        return frontend_proc
+    except Exception as exc:
+        with print_lock:
+            print(f"{RED}✖ Failed to start Next.js frontend: {exc}{R}", flush=True)
+        return None
+
+
+def stop_frontend():
+    global frontend_proc
+    if frontend_proc and frontend_proc.poll() is None:
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(frontend_proc.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                frontend_proc.terminate()
+                frontend_proc.wait(timeout=3)
+        except Exception:
+            pass
+        frontend_proc = None
+
+
+atexit.register(stop_frontend)
 
 
 def banner(ip):
@@ -510,7 +574,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except OSError:
                 template = None
 
-        if wants_json or template is None:
+        if wants_json:
             body = json.dumps(
                 {"path": self.req_path, "items": items, "app": APP_NAME},
                 ensure_ascii=False,
@@ -521,6 +585,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             return io.BytesIO(body)
+
+        if template is None:
+            # Proxy directly from internal Next.js frontend running on 127.0.0.1:FRONTEND_PORT
+            return self.proxy_to_frontend()
 
         data = json.dumps(
             {"path": self.req_path, "items": items, "app": APP_NAME}, ensure_ascii=False
@@ -540,6 +608,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         return io.BytesIO(payload)
+
+    # ---------- reverse proxy to internal Next.js on 127.0.0.1 ----------
+    def proxy_to_frontend(self):
+        """Proxy frontend requests to internal Next.js server running on 127.0.0.1:FRONTEND_PORT."""
+        import urllib.request
+        target_url = f"http://127.0.0.1:{FRONTEND_PORT}{self.path}"
+        req_headers = {}
+        for k, v in self.headers.items():
+            if k.lower() not in ("host", "connection", "content-length"):
+                req_headers[k] = v
+        req_headers["Host"] = f"127.0.0.1:{FRONTEND_PORT}"
+        req_headers["X-Forwarded-For"] = self.client_address[0]
+        req_headers["X-Forwarded-Proto"] = "http"
+
+        body = None
+        if self.command in ("POST", "PUT", "PATCH"):
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > 0:
+                    body = self.rfile.read(length)
+            except Exception:
+                pass
+
+        req = urllib.request.Request(target_url, data=body, headers=req_headers, method=self.command)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                self.send_response(resp.status)
+                for header, value in resp.getheaders():
+                    if header.lower() not in ("transfer-encoding", "connection", "content-length"):
+                        self.send_header(header, value)
+                content = resp.read()
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+        except urllib.error.HTTPError as exc:
+            self.send_response(exc.code)
+            for header, value in exc.headers.items():
+                if header.lower() not in ("transfer-encoding", "connection", "content-length"):
+                    self.send_header(header, value)
+            content = exc.read()
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, f"Frontend service unavailable: {exc}")
+        self.logged = True
+        return None
 
     # ---------- cache / player API ----------
     def _send_bytes(self, body, ctype, cache="no-store", status=200):
@@ -578,6 +693,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/_next/") or parsed.path == "/favicon.ico":
+            self.quiet = True
+            return self.proxy_to_frontend()
         if not parsed.path.startswith("/__api/"):
             return super().do_GET()
         self._api_start(parsed)
@@ -902,6 +1020,7 @@ if __name__ == "__main__":
         print(f"{RED}✖ Folder not found: {root}{R}")
         raise SystemExit(1)
     init_runtime(root)
+    start_frontend()
     banner(local_ip())
     posters.start_background()  # poster + preview scans run in the background
     threading.Thread(
@@ -919,3 +1038,5 @@ if __name__ == "__main__":
                 f"{ABORT_COL}{stats['aborted']} stopped{R} · "
                 f"{RED}{stats['errors']} errors{R} · {mins:.1f} min"
             )
+        finally:
+            stop_frontend()
