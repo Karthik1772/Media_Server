@@ -33,3 +33,43 @@ npm run build
 ```
 
 The Next.js configuration retains the existing static export and `/__ui` base path expected by `server.py`. For a complete manual regression list, see [`web/TESTING.md`](web/TESTING.md). For architecture details, see [`web/ARCHITECTURE.md`](web/ARCHITECTURE.md).
+
+## Phase 2 backend layout
+
+The Python entry point remains `python server.py`. The entry point now delegates to
+`streamly_server/application.py`; the poster/media implementation lives under
+`streamly_server/features/posters/service.py`, with `posters.py` retained as a
+backward-compatible import shim. Shared cache migration helpers live under
+`streamly_server/shared/cache/`.
+
+All generated server-side cache data is stored under `cache/` beside the server
+application. On startup, legacy cache directories are migrated into this root
+without overwriting existing files. Existing API URL prefixes are retained.
+
+Folder navigation uses `GET /__api/library?path=...` to refresh the library data
+without a full document reload. Direct folder URLs and browser refresh continue
+to work as before.
+
+### Adaptive media folders
+
+Streamly chooses the presentation for each selected folder from the media it contains, rather than relying on folder names. Video folders use the cinematic library, photo folders use album-first cards, and mixed folders provide All / Photos / Videos filters. Every nested folder is classified independently when opened, so photos inside a video root and videos inside a photo root are both supported. Folder discovery is bounded and cached briefly to keep large libraries responsive; original media paths are never reorganized.
+
+## Python package structure
+
+The Python backend is organized under `streamly_server/`. `server.py` remains the launcher. `streamly_server/application.py` owns HTTP/server lifecycle; feature code is separated into `features/library`, `features/playback`, and `features/posters`; shared cache logic is in `shared/cache`. The stable poster API is available at `streamly_server.posters`. The root `posters.py` is retained only as a backwards-compatible shim for existing imports. See [`streamly_server/ARCHITECTURE.md`](streamly_server/ARCHITECTURE.md).
+
+To select a different media root, pass it as the first argument, for example `python server.py "E:\\photos"` or `python server.py "E:\\Vedios"`.
+
+
+## Phase 7 validation and hardening
+
+The backend library scanner now has both a file cap and a total directory-entry cap, preventing very large trees containing mostly empty folders from monopolizing a scan. Directory symlinks are not followed. The automated backend regression suite covers adaptive folder classification, bounded scans, symlink handling, and safe cache migration.
+
+Run backend checks from the project root:
+
+```bash
+python -m unittest discover -s tests -v
+python -m py_compile server.py posters.py streamly_server/application.py streamly_server/posters.py streamly_server/features/*/*.py streamly_server/shared/cache/*.py
+```
+
+For full release verification, also run `npm ci` and `npm run check` from `web/`, then complete the manual media/player checks in `web/TESTING.md` on the Windows machine that contains the media library.

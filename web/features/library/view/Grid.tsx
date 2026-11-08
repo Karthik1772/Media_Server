@@ -1,27 +1,14 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useMemo } from "react";
 import { Card } from "@/features/library/view/Card";
-import { Skeleton } from "@/shared/components/ui/skeleton";
 import type { Item, ViewMode } from "@/lib/types";
-import { reducedMotion } from "@/lib/motion";
-
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-const COLS = {
-  grid: "grid-cols-2 max-[360px]:grid-cols-1 min-[601px]:grid-cols-[repeat(auto-fill,minmax(170px,1fr))] min-[1025px]:grid-cols-[repeat(auto-fill,minmax(210px,1fr))] min-[1600px]:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] min-[2200px]:grid-cols-[repeat(auto-fill,minmax(260px,1fr))]",
-  posters:
-    "grid-cols-2 max-[360px]:grid-cols-1 min-[601px]:grid-cols-[repeat(auto-fill,minmax(170px,1fr))] min-[1600px]:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] min-[2200px]:grid-cols-[repeat(auto-fill,minmax(260px,1fr))]",
-  list: "grid-cols-1",
-};
+import { fmtSize } from "@/lib/format";
+import { Skeleton } from "@/shared/components/ui/skeleton";
 
 interface Props {
   items: Item[];
   view: ViewMode;
   hasPosters: boolean;
+  mediaMode?: "video" | "photo" | "mixed" | "collections";
   leaving: boolean;
   skeleton: boolean;
   flashUrl: string;
@@ -29,136 +16,90 @@ interface Props {
   onEditPoster: (it: Item) => void;
 }
 
-/**
- * The card grid. Cards glide to their new place when the search, sort or layout changes,
- * new ones pop in, and the ones that left shrink away where they were.
- */
-export function Grid({ items, view, hasPosters, leaving, skeleton, flashUrl, onOpen, onEditPoster }: Props) {
-  const gridRef = useRef<HTMLDivElement>(null);
-  const nodes = useRef(new Map<string, HTMLElement>());
-  const last = useRef(new Map<string, Rect>()); // where every card was after the previous render (page coordinates)
-  const removed = useRef<{ el: HTMLElement; r?: Rect }[]>([]);
-  const rendered = useRef(false); // false until the first render has been laid out
+const noop = () => {};
+const folderCols = "grid grid-cols-2 gap-3 min-[601px]:grid-cols-[repeat(auto-fill,minmax(170px,1fr))] min-[1025px]:grid-cols-[repeat(auto-fill,minmax(210px,1fr))] min-[1600px]:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]";
 
-  const onMount = useCallback((key: string, el: HTMLElement) => {
-    nodes.current.set(key, el);
-  }, []);
-  const onUnmount = useCallback((key: string, el: HTMLElement) => {
-    removed.current.push({ el, r: last.current.get(key) });
-    nodes.current.delete(key);
-    last.current.delete(key);
-  }, []);
-
-  const measure = useCallback(() => {
-    const map = new Map<string, Rect>();
-    nodes.current.forEach((el, key) => {
-      const r = el.getBoundingClientRect();
-      map.set(key, { x: r.left + scrollX, y: r.top + scrollY, w: r.width, h: r.height });
-    });
-    return map;
-  }, []);
-
-  // runs after every render, before the browser paints
-  useLayoutEffect(() => {
-    const motion = !reducedMotion() && rendered.current;
-    const next = measure();
-
-    if (motion) {
-      next.forEach((cur, key) => {
-        const p = last.current.get(key);
-        const el = nodes.current.get(key);
-        if (!p || !el) return;
-        const dx = p.x - cur.x;
-        const dy = p.y - cur.y;
-        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-          el.animate(
-            [
-              { transform: `translate(${dx}px, ${dy}px)`, opacity: 0.75 },
-              { transform: "none", opacity: 1 },
-            ],
-            { duration: 190, easing: "cubic-bezier(.2,.7,.2,1)" },
-          );
-        }
-      });
-
-      // cards that left: shrink and fade where they were
-      let ghosts = 0;
-      removed.current.forEach(({ el, r }) => {
-        if (!r || ghosts >= 40) return;
-        const top = r.y - scrollY;
-        const left = r.x - scrollX;
-        if (top + r.h < 0 || top > innerHeight) return;
-        ghosts++;
-        const gh = el.cloneNode(true) as HTMLElement;
-        gh.className = "rounded-card border border-line bg-panel overflow-hidden";
-        gh.style.cssText = `position:fixed;left:${left}px;top:${top}px;width:${r.w}px;height:${r.h}px;margin:0;pointer-events:none;z-index:5`;
-        document.body.appendChild(gh);
-        gh.animate(
-          [
-            { opacity: 0.72 },
-            { opacity: 0 },
-          ],
-          { duration: 170, easing: "ease-in", fill: "forwards" },
-        ).onfinish = () => gh.remove();
-      });
-    }
-
-    removed.current = [];
-    last.current = next;
-    rendered.current = true;
-  });
-
-  // layout shifts that are not renders (window resized, a poster finished loading) must not look like moves
-  useEffect(() => {
-    const el = gridRef.current;
-    if (!el || !("ResizeObserver" in window)) return;
-    const ro = new ResizeObserver(() => {
-      last.current = measure();
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [measure]);
-
-  const cols = view === "list" ? COLS.list : hasPosters ? COLS.posters : COLS.grid;
-  const wrapper = `group/grid grid gap-2.5 min-[601px]:gap-3.5 min-[700px]:gap-[18px] ${view === "list" ? "!gap-2" : ""} ${cols}`;
-
-  if (skeleton) {
-    return (
-      <div className={wrapper}>
-        {Array.from({ length: 12 }, (_, i) => (
-          <div
-            key={i}
-            className="pointer-events-none animate-fade-in overflow-hidden rounded-card border border-line bg-panel"
-          >
-            <Skeleton className="aspect-video rounded-none" />
-            <div className="space-y-2 p-3">
-              <Skeleton className="h-[11px]" />
-              <Skeleton className="h-[11px] w-[55%]" />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div ref={gridRef} data-leaving={leaving} className={wrapper}>
-      {items.map((it, n) => (
-        <Fragment key={it.url}>
-          {/* folders and files never share a row: poster cards are much taller than folder cards */}
-          {n > 0 && !it.dir && items[n - 1].dir && view !== "list" && <div className="col-span-full h-0" />}
-          <Card
-            item={it}
-            view={view}
-            reveal={rendered.current ? "now" : "observe"}
-            flash={flashUrl === it.url}
-            onOpen={onOpen}
-            onEditPoster={onEditPoster}
-            onMount={onMount}
-            onUnmount={onUnmount}
-          />
-        </Fragment>
-      ))}
+function FolderSection({ items, view, mediaMode, flashUrl, onOpen, onEditPoster }: Pick<Props, "view" | "mediaMode" | "flashUrl" | "onOpen" | "onEditPoster"> & { items: Item[] }) {
+  if (!items.length) return null;
+  return <section className="mb-8">
+    <h2 className="mb-3 text-sm font-semibold tracking-wide text-fg">Folders <span className="ml-1 text-xs font-normal text-mute">{items.length}</span></h2>
+    <div className={view === "list" ? "grid grid-cols-1 gap-2" : folderCols}>
+      {items.map((item) => <Card key={item.url} item={item} mediaMode={mediaMode} view={view} reveal="now" flash={flashUrl === item.url} onOpen={onOpen} onEditPoster={onEditPoster} onMount={noop} onUnmount={noop} />)}
     </div>
-  );
+  </section>;
+}
+
+function VideoTile({ item, onOpen, featured = false }: { item: Item; onOpen: (it: Item) => void; featured?: boolean }) {
+  const image = item.poster || "";
+  return <button type="button" onClick={() => onOpen(item)} className={`group relative block shrink-0 overflow-hidden rounded-xl border border-white/10 bg-[#171717] text-left text-white ${featured ? "min-h-[230px] w-full" : "w-[142px] min-[700px]:w-[174px]"}`}>
+    <div className={featured ? "absolute inset-0" : "aspect-[2/3] w-full"}>
+      {image ? <img src={image} alt="" loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-zinc-700 to-black text-3xl">▶</div>}
+      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent" />
+    </div>
+    <div className={featured ? "absolute inset-x-0 bottom-0 p-5" : "p-2.5"}>
+      {featured && <div className="mb-1 text-[10px] uppercase tracking-[.2em] text-white/70">Featured</div>}
+      <div className="line-clamp-2 text-sm font-semibold">{item.name}</div>
+      <div className="mt-1 text-[10px] text-white/65">{fmtSize(item.size)}</div>
+    </div>
+    {featured && <span className="absolute right-5 bottom-5 grid size-12 place-items-center rounded-full border border-white/40 bg-black/40 text-xl">▶</span>}
+  </button>;
+}
+
+function VideoExperience({ items, onOpen }: { items: Item[]; onOpen: (it: Item) => void }) {
+  if (!items.length) return null;
+  const [featured, ...rest] = items;
+  const recent = rest.slice(0, 5);
+  return <div className="stream-video-ui space-y-8 text-white">
+    <section className="grid gap-4 min-[850px]:grid-cols-[minmax(0,1.7fr)_minmax(230px,.7fr)]">
+      <VideoTile item={featured} onOpen={onOpen} featured />
+      <div className="min-w-0 rounded-xl border border-white/10 bg-[#111] p-4">
+        <h2 className="mb-3 text-sm font-semibold">Now watching</h2>
+        <div className="space-y-3">{(recent.length ? recent : [featured]).slice(0, 4).map((item) => <button key={item.url} onClick={() => onOpen(item)} className="flex w-full items-center gap-3 text-left">
+          <span className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-zinc-800">{item.poster && <img src={item.poster} alt="" className="size-full object-cover" />}<span className="absolute inset-0 grid place-items-center bg-black/20">▶</span></span>
+          <span className="min-w-0"><span className="block line-clamp-2 text-xs font-medium">{item.name}</span><span className="mt-1 block text-[10px] text-white/50">{fmtSize(item.size)}</span></span>
+        </button>)}</div>
+      </div>
+    </section>
+    <section>
+      <div className="mb-3 flex items-center justify-between"><h2 className="text-base font-semibold">Videos</h2><span className="text-xs text-white/45">{items.length} titles</span></div>
+      <div className="flex gap-3 overflow-x-auto pb-3">{items.map((item) => <VideoTile key={item.url} item={item} onOpen={onOpen} />)}</div>
+    </section>
+  </div>;
+}
+
+function PhotoExperience({ items, onOpen }: { items: Item[]; onOpen: (it: Item) => void }) {
+  return <div className="stream-photo-ui">
+    <div className="mb-4 flex items-center justify-between"><div><div className="text-xs uppercase tracking-[.2em] text-mute">Photo collection</div><h2 className="mt-1 text-xl font-semibold">Your moments</h2></div><span className="text-xs text-mute">{items.length} photos</span></div>
+    <div className="columns-2 gap-3 min-[600px]:columns-3 min-[900px]:columns-4 min-[1200px]:columns-5">
+      {items.map((item, index) => <button key={item.url} type="button" onClick={() => onOpen(item)} className="group mb-3 block w-full break-inside-avoid overflow-hidden rounded-xl border border-line bg-panel text-left">
+        <div className="relative overflow-hidden bg-panel2" style={{ aspectRatio: index % 5 === 0 ? "4 / 5" : index % 3 === 0 ? "5 / 4" : "4 / 3" }}>
+          <img src={item.thumb || item.view || item.url} alt={item.name} loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover:scale-[1.035]" />
+        </div>
+        <div className="truncate px-2.5 py-2 text-xs text-fg">{item.name}</div>
+      </button>)}
+    </div>
+  </div>;
+}
+
+export function Grid({ items, view, mediaMode, leaving, skeleton, flashUrl, onOpen, onEditPoster }: Props) {
+  const folders = useMemo(() => items.filter((item) => item.dir), [items]);
+  const videos = useMemo(() => items.filter((item) => !item.dir && item.kind === "video"), [items]);
+  const photos = useMemo(() => items.filter((item) => !item.dir && item.kind === "image"), [items]);
+  const other = useMemo(() => items.filter((item) => !item.dir), [items]);
+
+  if (skeleton) return <div className={folderCols}>{Array.from({ length: 8 }, (_, i) => <div key={i} className="overflow-hidden rounded-xl border border-line bg-panel"><Skeleton className="aspect-video rounded-none" /><div className="space-y-2 p-3"><Skeleton className="h-3" /><Skeleton className="h-3 w-1/2" /></div></div>)}</div>;
+
+  const videoMode = mediaMode === "video";
+  const photoMode = mediaMode === "photo";
+  const mixedMode = mediaMode === "mixed";
+  return <div data-leaving={leaving} className="space-y-7">
+    <FolderSection items={folders} view={view} mediaMode={mediaMode} flashUrl={flashUrl} onOpen={onOpen} onEditPoster={onEditPoster} />
+    {videoMode && <VideoExperience items={videos} onOpen={onOpen} />}
+    {photoMode && <PhotoExperience items={photos} onOpen={onOpen} />}
+    {mixedMode && <>
+      {videos.length > 0 && <VideoExperience items={videos} onOpen={onOpen} />}
+      {photos.length > 0 && <PhotoExperience items={photos} onOpen={onOpen} />}
+    </>}
+    {!videoMode && !photoMode && !mixedMode && <div className={folderCols}>{other.map((item) => <Card key={item.url} item={item} view={view} reveal="now" flash={flashUrl === item.url} onOpen={onOpen} onEditPoster={onEditPoster} onMount={noop} onUnmount={noop} />)}</div>}
+  </div>;
 }

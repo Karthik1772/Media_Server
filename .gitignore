@@ -4,6 +4,7 @@
 !.env.example
 
 # --- generated caches (rebuilt automatically by the server) ---------------
+cache/
 films_thumbnails/
 short_video_thumbnails/
 photo_thumbnails/

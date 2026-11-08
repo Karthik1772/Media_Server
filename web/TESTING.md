@@ -74,7 +74,11 @@ Use at least one small MP4 and one large/long video. If available, also test an 
 - [ ] Mouse movement reveals controls and idle timeout hides them.
 - [ ] Single and double taps retain their previous behaviour.
 - [ ] Touch horizontal gesture seeks.
-- [ ] Touch vertical gesture changes brightness/volume on the expected side.
+- [ ] Touch vertical gesture changes video brightness/volume on the expected side.
+- [ ] Mouse vertical drag changes video brightness/volume on a laptop.
+- [ ] Holding a playing video for 2 seconds boosts to 2x, then 3x and 4x; release restores the prior speed.
+- [ ] Speed menu supports 0.5x through 4x.
+- [ ] Volume slider/gesture/keyboard support 0–200% where Web Audio amplification is supported.
 - [ ] Pinch zoom and pan work on a touch device.
 - [ ] Ctrl+wheel/trackpad zoom and plain wheel volume work.
 - [ ] Player lock/unlock works.
@@ -110,8 +114,26 @@ Test at desktop, tablet and phone widths.
 
 - [ ] Existing localStorage keys are still present and interpreted correctly: `sort`, `view`, `vol`, `muted`, `speed`, `subSize`, `subColor`, `trkpref2`, `trk2:*`, `lsub:*`, `lsubIdx`, `theme` and playback position keys.
 - [ ] Existing Python API routes remain unchanged: `/__api/tracks`, `/__api/subtitle`, `/__api/audio-prepare`, `/__api/poster-search`, `/__api/poster-select` and `/__api/thumb`.
-- [ ] The Python server files are unchanged in this archive.
+- [ ] Folder navigation uses `/__api/library` and updates the UI without a full document reload.
+- [ ] Browser Back/Forward restores the correct folder without reloading the application.
+- [ ] Selecting the original audio track returns to the embedded track without requesting a new extraction.
+- [ ] Switching repeatedly to an already-extracted alternate track reuses the server cache.
+- [ ] Every generated cache folder is beneath the single `cache/` root.
+- [ ] Legacy cache folders migrate without overwriting colliding files.
+- [ ] `python server.py` repairs a missing/incomplete Next.js installation before starting the UI.
 
 ## Report issues
 
 If something fails, note the browser, device, media file/container, exact action and console/network error. Fix regressions before treating the refactor as complete.
+
+## Adaptive media UI regression checks
+
+- Open a video root containing both subfolders and video files: verify the familiar
+  folder cards remain landscape cards and appear above the cinematic video view.
+- Open a photo root containing both subfolders and photos: verify the same folder-card
+  design remains and photos use the masonry gallery.
+- Open a mixed root: verify folders remain navigable and All / Photos / Videos filters
+  only affect direct media items.
+- Open nested folders of each type and verify the layout follows their scanned contents,
+  not their folder names.
+- Open a video/photo from each layout and verify the existing player/viewer opens.

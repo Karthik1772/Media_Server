@@ -7,13 +7,13 @@ import { installRipple } from "@/lib/ripple";
 
 /** Everything the browser draws: providers, the splash, and the folder view. */
 export default function AppRoot() {
-  const [data] = useState(readLibraryData);
+  const [data, setData] = useState(readLibraryData);
   useEffect(() => installRipple(), []);
 
   return (
     <Providers>
       <Splash />
-      <Library data={data} />
+      <Library data={data} onNavigate={setData} />
     </Providers>
   );
 }

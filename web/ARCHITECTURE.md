@@ -89,3 +89,18 @@ The player remains the most tightly coupled part of the UI because its media ele
 ## Validation
 
 See `TESTING.md` for the local commands and manual regression checklist. A successful syntax parse and local import-path check were performed while preparing this archive. Full TypeScript/build verification requires installing the project's npm dependencies in the user's local environment.
+
+## Adaptive media presentation
+
+The library view keeps folder cards in a dedicated section and renders direct media
+with a presentation selected from the server's content-based `mediaMode`:
+
+- `video`: cinematic featured-video / now-watching layout and horizontal title rail.
+- `photo`: album heading and responsive masonry-style photo gallery.
+- `mixed`: folder cards followed by both media presentations; the All / Photos / Videos
+  filter narrows the direct media while leaving folder navigation available.
+- `collections`: the standard file-card grid remains in use.
+
+Folder cards retain a consistent landscape aspect ratio in every mode. Nested folders
+are classified independently by the backend when opened; their names do not determine
+which presentation they receive.

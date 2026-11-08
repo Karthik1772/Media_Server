@@ -18,7 +18,7 @@ export interface PlayerGestureState {
   x: number;
   y: number;
   touch: boolean;
-  mode: "" | "pan" | "seek" | "bright" | "vol";
+  mode: "" | "pan" | "seek" | "bright" | "vol" | "hold";
   zx: number;
   zy: number;
   t0: number;

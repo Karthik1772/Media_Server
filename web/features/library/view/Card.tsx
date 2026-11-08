@@ -138,6 +138,7 @@ function PlayBadge() {
 /* ---------- the card ---------- */
 interface Props {
   item: Item;
+  mediaMode?: "video" | "photo" | "mixed" | "collections";
   view: ViewMode;
   /** "observe" = fade in when scrolled into view; "now" = it appeared because of a search/sort/view change */
   reveal: "observe" | "now";
@@ -148,7 +149,7 @@ interface Props {
   onUnmount: (key: string, el: HTMLElement) => void;
 }
 
-export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMount, onUnmount }: Props) {
+export function Card({ item: it, mediaMode, view, reveal, flash, onOpen, onEditPoster, onMount, onUnmount }: Props) {
   const ref = useRef<HTMLAnchorElement>(null);
   const [shown, setShown] = useState(reveal === "now");
   const [loaded, setLoaded] = useState(false);
@@ -169,28 +170,38 @@ export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMo
   }, [shown]);
 
   const isMedia = !it.dir && (it.kind === "video" || it.kind === "audio" || it.kind === "image");
-  const sub = it.dir ? "Folder" : `${fmtSize(it.size)} · ${fmtDate(it.mtime)}`;
+  const sub = it.dir
+    ? `${it.mediaCounts?.photos || 0} photos · ${it.mediaCounts?.videos || 0} videos`
+    : `${fmtSize(it.size)} · ${fmtDate(it.mtime)}`;
   const scope = it.scope || "other";
   const posterScope = it.kind === "video" && scope === "poster";
   const p = it.kind === "video" ? progress(it) : 0;
 
   let thumb;
-  const base = `relative grid place-items-center overflow-hidden bg-panel2 ${
-    posterScope ? "aspect-[2/3]" : "aspect-video"
-  } ${list ? (posterScope ? "w-[84px]" : "w-[100px] min-[601px]:w-[120px]") + " flex-none" : ""}`;
+  // Folder cards keep one consistent, familiar shape regardless of the media inside.
+  const cardAspect = it.dir
+    ? "aspect-video"
+    : posterScope ? "aspect-[2/3]" : mediaMode === "photo" && it.kind === "image" ? "aspect-[4/3]" : "aspect-video";
+  const base = `relative grid place-items-center overflow-hidden bg-panel2 ${cardAspect} ${list ? (posterScope ? "w-[84px]" : "w-[100px] min-[601px]:w-[120px]") + " flex-none" : ""}`;
 
   if (it.dir) {
+    const folderMode = it.mediaMode || "collections";
+    const modeLabel = folderMode === "photo" ? "PHOTOS" : folderMode === "video" ? "VIDEOS" : folderMode === "mixed" ? "MIXED" : "FOLDER";
     thumb = (
       <div
         className={base}
         style={{
-          background: `linear-gradient(135deg, hsl(${hue(it.name)} 70% 40%), hsl(${hue(it.name) + 50} 70% 22%))`,
+          background: `linear-gradient(135deg, hsl(${hue(it.name)} 48% 28%), hsl(${hue(it.name) + 50} 48% 13%))`,
         }}
       >
-        <span className={ico}>&#128193;</span>
-        <Badge className={badgePos}>
-          {it.count} item{it.count === 1 ? "" : "s"}
-        </Badge>
+        {it.folderPreview ? (
+          <img src={it.folderPreview} alt="" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover opacity-90 transition-transform duration-300 group-hover:scale-[1.025]" />
+        ) : (
+          <span className={ico}>{folderMode === "photo" ? "▧" : folderMode === "video" ? "▶" : "▰"}</span>
+        )}
+        <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent" />
+        <span className="absolute bottom-2 left-2 z-[2] rounded-md border border-white/20 bg-black/55 px-2 py-1 text-[9px] font-semibold tracking-[.14em] text-white">{modeLabel}</span>
+        <Badge className={badgePos}>{it.count} items</Badge>
       </div>
     );
   } else if (it.kind === "image" && it.heic && !it.thumb) {

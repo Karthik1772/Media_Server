@@ -23,16 +23,19 @@ interface Overlay {
 }
 
 /** The folder view: breadcrumbs, title, search / sort / layout, and the grid of cards. */
-export function Library({ data }: { data: LibraryData }) {
+export function Library({ data, onNavigate }: { data: LibraryData; onNavigate: (data: LibraryData) => void }) {
   const searchRef = useRef<HTMLInputElement>(null);
   const [libraryItems, setLibraryItems] = useState(data.items);
+  useEffect(() => setLibraryItems(data.items), [data.items]);
 
   const { query, sort, view, items, setQuery, setSort, setView } = useLibraryViewModel(libraryItems);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
+  const [mediaFilter, setMediaFilter] = useState<"all" | "photo" | "video">("all");
   const [posterTarget, setPosterTarget] = useState<Item | null>(null);
   const [flashUrl, setFlashUrl] = useState("");
   const [leaving, setLeaving] = useState(false);
   const [skeleton, setSkeleton] = useState(false);
+  const navigationRequest = useRef(0);
 
   const appName = data.app || "Streamly";
   const parts = useMemo(() => data.path.split("/").filter(Boolean), [data.path]);
@@ -81,20 +84,41 @@ export function Library({ data }: { data: LibraryData }) {
   }, [items]);
 
   /* ---------- opening a folder: cards fade out, placeholders show while the next page loads ---------- */
-  const go = useCallback((href: string) => {
-    if (reducedMotion()) {
-      location.href = href;
-      return;
-    }
+  const loadFolder = useCallback(async (href: string, pushHistory: boolean) => {
+    const url = new URL(href, window.location.href);
+    if (url.origin !== window.location.origin) return;
+    const requestId = ++navigationRequest.current;
     setBusy("nav", true);
-    setLeaving(true);
-    setTimeout(() => {
-      setSkeleton(true);
-      setTimeout(() => {
-        location.href = href;
-      }, 40);
-    }, 170);
-  }, []);
+    setLeaving(!reducedMotion());
+    setSkeleton(true);
+    try {
+      const response = await fetch(`/__api/library?path=${encodeURIComponent(url.pathname)}`, { cache: "no-store" });
+      const next = await response.json() as LibraryData & { error?: string };
+      if (requestId !== navigationRequest.current) return;
+      if (!response.ok) throw new Error(next.error || "Couldn't open that folder");
+      if (pushHistory) history.pushState({ folder: true }, "", url.pathname);
+      onNavigate(next);
+      setMediaFilter("all");
+      setQuery("");
+      window.scrollTo(0, 0);
+      setOverlay(null);
+      setPosterTarget(null);
+      setSkeleton(false);
+      setLeaving(false);
+    } catch (error) {
+      if (requestId === navigationRequest.current) {
+        toast(error instanceof Error ? error.message : "Couldn't open that folder");
+        setSkeleton(false);
+        setLeaving(false);
+      }
+    } finally {
+      if (requestId === navigationRequest.current) setBusy("nav", false);
+    }
+  }, [onNavigate, setQuery]);
+
+  const go = useCallback((href: string) => {
+    void loadFolder(href, true);
+  }, [loadFolder]);
 
   // coming back with the browser's Back button must not show the placeholders
   useEffect(() => {
@@ -120,12 +144,16 @@ export function Library({ data }: { data: LibraryData }) {
 
   useEffect(() => {
     const onPop = () => {
-      overlayOpen.current = false;
-      hideOverlay();
+      if (overlayOpen.current) {
+        overlayOpen.current = false;
+        hideOverlay();
+        return;
+      }
+      void loadFolder(window.location.pathname, false);
     };
     addEventListener("popstate", onPop);
     return () => removeEventListener("popstate", onPop);
-  }, [hideOverlay]);
+  }, [hideOverlay, loadFolder]);
 
   const openMedia = useCallback(
     (it: Item) => {
@@ -155,10 +183,10 @@ export function Library({ data }: { data: LibraryData }) {
     setLibraryItems((current) => current.map((entry) => entry.url === it.url ? { ...entry, poster } : entry));
     setFlashUrl(it.url);
     setPosterTarget(null);
-    // every episode of the show got the new poster - reload to show them all
-    if (wasShow) setTimeout(() => location.reload(), 700);
+    // Refresh the current listing so every episode receives the updated show poster.
+    if (wasShow) setTimeout(() => void loadFolder(window.location.pathname, false), 700);
     toast(poster ? "Poster saved" : "Poster reset to default");
-  }, []);
+  }, [loadFolder]);
 
   useEffect(() => {
     if (!flashUrl) return;
@@ -179,6 +207,11 @@ export function Library({ data }: { data: LibraryData }) {
     return () => removeEventListener("keydown", onKey);
   }, [overlay, posterTarget]);
 
+  const visibleItems = useMemo(() => {
+    if (data.mediaMode !== "mixed" || mediaFilter === "all") return items;
+    return items.filter((item) => item.dir || (mediaFilter === "photo" ? item.kind === "image" : item.kind === "video"));
+  }, [data.mediaMode, items, mediaFilter]);
+
   const changeSort = setSort;
   const changeView = setView;
 
@@ -187,14 +220,15 @@ export function Library({ data }: { data: LibraryData }) {
       <Header ref={searchRef} appName={appName} query={query} onQuery={setQuery} />
       <main className="mx-auto max-w-[1500px] pt-3 pr-[calc(10px+env(safe-area-inset-right))] pb-10 pl-[calc(10px+env(safe-area-inset-left))] min-[601px]:pt-3.5 min-[601px]:pr-[calc(16px+env(safe-area-inset-right))] min-[601px]:pb-[60px] min-[601px]:pl-[calc(16px+env(safe-area-inset-left))] min-[1600px]:max-w-[1900px] min-[2200px]:max-w-[2400px]">
         <Crumbs crumbs={crumbs} />
-        <LibraryHead title={title} stats={stats} backdrop={libraryItems.find((entry) => entry.kind === "video" && entry.poster)?.poster || libraryItems.find((entry) => entry.kind === "image" && entry.thumb)?.thumb} sort={sort} onSort={changeSort} view={view} onView={changeView} />
+        <LibraryHead title={title} mediaMode={data.mediaMode} mediaFilter={mediaFilter} onMediaFilter={setMediaFilter} stats={stats} backdrop={libraryItems.find((entry) => entry.kind === "video" && entry.poster)?.poster || libraryItems.find((entry) => entry.kind === "image" && entry.thumb)?.thumb} sort={sort} onSort={changeSort} view={view} onView={changeView} />
         {items.length === 0 && !skeleton ? (
           <Empty query={query.trim() ? query : ""} />
         ) : (
           <Grid
-            items={items}
+            items={visibleItems}
             view={view}
             hasPosters={hasPosters}
+            mediaMode={data.mediaMode}
             leaving={leaving}
             skeleton={skeleton}
             flashUrl={flashUrl}

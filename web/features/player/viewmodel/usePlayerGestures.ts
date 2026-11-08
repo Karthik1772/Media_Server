@@ -1,4 +1,4 @@
-import type { MutableRefObject, PointerEvent as ReactPointerEvent, RefObject } from "react";
+import { useRef, type MutableRefObject, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { clamp, safeTime } from "@/lib/format";
 import type { PlayerGestureState, PlayerPinchState, PlayerPreferences } from "@/features/player/model/player.types";
 
@@ -33,10 +33,25 @@ interface Options<T extends RuntimeGestureState> {
   saveVolume: () => void;
   seekTo: (time: number) => void;
   wake: (duration?: number) => void;
+  setTemporarySpeed: (speed: number) => void;
+  getPlaybackRate: () => number;
+  isPlaying: () => boolean;
 }
 
 /** Touch/pointer interaction ViewModel for taps, seeking, brightness, volume and pinch zoom. */
 export function usePlayerGestures<T extends RuntimeGestureState>(options: Options<T>) {
+  const holdTimer = useRef<number | null>(null);
+  const holdInterval = useRef<number | null>(null);
+  const holdActive = useRef(false);
+  const holdOriginalRate = useRef(1);
+  const clearHold = (restore: boolean) => {
+    if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
+    if (holdInterval.current !== null) window.clearInterval(holdInterval.current);
+    holdTimer.current = null;
+    holdInterval.current = null;
+    if (holdActive.current && restore) options.setTemporarySpeed(holdOriginalRate.current);
+    holdActive.current = false;
+  };
   const onTap = (event: ReactPointerEvent, touch: boolean) => {
     const runtime = options.runtimeRef.current;
     // Opening a player menu takes precedence over stage taps.
@@ -65,6 +80,7 @@ export function usePlayerGestures<T extends RuntimeGestureState>(options: Option
     const runtime = options.runtimeRef.current;
     if (options.lockedRef.current) return options.showUnlock();
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
     if (event.pointerType !== "mouse") {
       options.pointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (options.pointsRef.current.size === 2) {
@@ -78,6 +94,7 @@ export function usePlayerGestures<T extends RuntimeGestureState>(options: Option
           y0: runtime.zoom.y,
         };
         runtime.gest = null;
+        clearHold(false);
         runtime.lastTap = 0;
         clearTimeout(runtime.t.tap);
         options.closeMenu();
@@ -89,12 +106,32 @@ export function usePlayerGestures<T extends RuntimeGestureState>(options: Option
       id: event.pointerId, x: event.clientX, y: event.clientY, touch: event.pointerType !== "mouse",
       mode: "", zx: 0, zy: 0, t0: 0, v0: 0, b0: 0,
     };
+    clearHold(false);
+    if (options.isPlaying()) {
+      holdTimer.current = window.setTimeout(() => {
+        const active = options.runtimeRef.current.gest;
+        if (!active || active.id !== event.pointerId || active.mode || !options.isPlaying()) return;
+        active.mode = "hold";
+        holdActive.current = true;
+        holdOriginalRate.current = options.getPlaybackRate();
+        options.setTemporarySpeed(2);
+        let level = 2;
+        holdInterval.current = window.setInterval(() => {
+          level = Math.min(4, level + 1);
+          options.setTemporarySpeed(level);
+          if (level >= 4 && holdInterval.current !== null) {
+            window.clearInterval(holdInterval.current);
+            holdInterval.current = null;
+          }
+        }, 1000);
+      }, 2000);
+    }
   }
 
   function onStageMove(event: ReactPointerEvent) {
     const runtime = options.runtimeRef.current;
     const video = options.videoRef.current!;
-    if (event.pointerType === "mouse") return options.wake(4000);
+    if (event.pointerType === "mouse" && (!runtime.gest || runtime.gest.id !== event.pointerId)) return options.wake(4000);
     if (options.pointsRef.current.has(event.pointerId)) {
       options.pointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
@@ -112,11 +149,13 @@ export function usePlayerGestures<T extends RuntimeGestureState>(options: Option
     }
     const gesture = runtime.gest;
     if (!gesture || event.pointerId !== gesture.id || options.lockedRef.current) return;
+    if (gesture.mode === "hold") return;
     const dx = event.clientX - gesture.x;
     const dy = event.clientY - gesture.y;
     const rect = options.stageRef.current!.getBoundingClientRect();
     if (!gesture.mode) {
       if (Math.hypot(dx, dy) < 16) return;
+      clearHold(false);
       gesture.mode = runtime.zoom.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "seek" : gesture.x - rect.left < rect.width / 2 ? "bright" : "vol";
       gesture.zx = runtime.zoom.x;
       gesture.zy = runtime.zoom.y;
@@ -133,9 +172,9 @@ export function usePlayerGestures<T extends RuntimeGestureState>(options: Option
       const difference = Math.round(gesture.target - gesture.t0);
       options.showHud((difference >= 0 ? "+" : "−") + Math.abs(difference) + " s", safeTime(gesture.target));
     } else if (gesture.mode === "vol") {
-      const volume = clamp(gesture.v0 - dy / (rect.height * 0.7), 0, 1);
+      const volume = clamp(gesture.v0 - dy / (rect.height * 0.7), 0, 2);
       options.setVolume(volume, false);
-      options.showHud("Volume", Math.round(volume * 100) + "%", volume);
+      options.showHud("Volume", Math.round(volume * 100) + "%", volume / 2);
     } else {
       runtime.bright = clamp(gesture.b0 - dy / (rect.height * 0.7), 0.25, 1.75);
       video.style.filter = runtime.bright === 1 ? "" : `brightness(${runtime.bright})`;
@@ -149,7 +188,12 @@ export function usePlayerGestures<T extends RuntimeGestureState>(options: Option
     if (options.pointsRef.current.size < 2) runtime.pinch = null;
     const gesture = runtime.gest;
     runtime.gest = null;
-    if (!gesture || event.pointerId !== gesture.id) return;
+    if (!gesture || event.pointerId !== gesture.id) { clearHold(false); return; }
+    if (gesture.mode === "hold") {
+      clearHold(true);
+      return;
+    }
+    clearHold(false);
     if (gesture.mode === "seek" && !cancelled && gesture.target !== undefined) options.seekTo(gesture.target);
     if (gesture.mode === "vol") options.saveVolume();
     if (gesture.mode || cancelled || options.lockedRef.current) return;

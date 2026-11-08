@@ -53,6 +53,7 @@ export function Player({ list, start, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const ctrl = useRef<HTMLDivElement>(null);
   const subFile = useRef<HTMLInputElement>(null);
+  const audioGraph = useRef<{ context: AudioContext; videoGain: GainNode; audioGain: GainNode } | null>(null);
 
   /* ----- state (the *Ref twin is always current - used by timers, async code and media events) ----- */
   const [i, setI, iRef] = useStateRef(start);
@@ -90,6 +91,7 @@ export function Player({ list, start, onClose }: Props) {
     prepId: 0,
     ext: false, // true while an extracted audio track plays from the <audio> element
     extIdx: 0,
+    audioUrls: new Map<string, string>(),
     fit: 0,
     bright: 1,
     zoom: { s: 1, x: 0, y: 0 }, // pinch zoom: scale and pan in px
@@ -219,13 +221,39 @@ export function Player({ list, start, onClose }: Props) {
     if (!v || !a) return;
     const pr = prefsRef.current;
     const m = pr.muted || pr.volume === 0;
-    if (P.current.ext) {
+    // Native media volume is capped at 100%. Create a Web Audio gain stage only
+    // when amplification is requested; it then handles both original and extracted audio.
+    if (pr.volume > 1 && !audioGraph.current) {
+      try {
+        const context = new AudioContext();
+        const videoSource = context.createMediaElementSource(v);
+        const audioSource = context.createMediaElementSource(a);
+        const videoGain = context.createGain();
+        const audioGain = context.createGain();
+        videoSource.connect(videoGain).connect(context.destination);
+        audioSource.connect(audioGain).connect(context.destination);
+        audioGraph.current = { context, videoGain, audioGain };
+        context.resume().catch(() => {});
+        v.volume = 1;
+        a.volume = 1;
+      } catch (error) {
+        console.warn("Streamly volume amplification is unavailable", error);
+      }
+    }
+    if (audioGraph.current) {
+      v.muted = m || P.current.ext;
+      a.muted = m || !P.current.ext;
+      v.volume = 1;
+      a.volume = 1;
+      audioGraph.current.videoGain.gain.value = m || P.current.ext ? 0 : pr.volume;
+      audioGraph.current.audioGain.gain.value = m || !P.current.ext ? 0 : pr.volume;
+    } else if (P.current.ext) {
       v.muted = true;
       a.muted = m;
-      a.volume = pr.volume;
+      a.volume = Math.min(1, pr.volume);
     } else {
       v.muted = m;
-      v.volume = pr.volume;
+      v.volume = Math.min(1, pr.volume);
     }
   }
 
@@ -252,9 +280,9 @@ export function Player({ list, start, onClose }: Props) {
   }
 
   function bumpVolume(d: number) {
-    const volume = clamp(Math.round((prefsRef.current.volume + d) * 100) / 100, 0, 1);
+    const volume = clamp(Math.round((prefsRef.current.volume + d) * 100) / 100, 0, 2);
     setVolume(volume, false);
-    showHud("Volume", Math.round(volume * 100) + "%", volume);
+    showHud("Volume", Math.round(volume * 100) + "%", volume / 2);
   }
 
   function setSpeed(v: number) {
@@ -543,15 +571,15 @@ export function Player({ list, start, onClose }: Props) {
     const my = ++p.prepId;
     setAIdx(idx);
     if (!auto) saveTrk("a");
-    // track 1 is what the video plays by itself - unless this browser can't decode it
-    if (idx === 0 && !needsConv(tr)) {
+    // Track zero is the media file's own audio. It is already present in the
+    // video element, so switching back must never start another extraction.
+    if (idx === 0) {
       setMsg("A", "");
       leaveExt();
       return;
     }
-    const hold = idx === 0; // silent otherwise, so wait for the converted track
+    const hold = false;
     const wasPlaying = !v.paused;
-    if (hold) v.pause();
     setMsg("A", "Preparing audio…");
     const stop = (msg?: string) => {
       setMsg("A", "");
@@ -560,14 +588,16 @@ export function Player({ list, start, onClose }: Props) {
       if (hold && wasPlaying) v.play().catch(() => {});
     };
     try {
-      let url = "";
-      for (;;) {
+      const cacheKey = `${it.key || it.url}::${idx}`;
+      let url = P.current.audioUrls.get(cacheKey) || "";
+      for (; !url;) {
         const j = await prepareAudio(it.key || "", idx);
         if (my !== p.prepId || token !== p.token) return;
         if (j.status === "error") throw new Error(j.error || "Couldn't prepare that audio track");
         if (j.status === "done") {
           if (!j.url) throw new Error("Audio preparation completed without a media URL");
           url = j.url;
+          P.current.audioUrls.set(cacheKey, url);
           break;
         }
         setMsg("A", "Preparing audio… " + Math.round((j.progress || 0) * 100) + "%");
@@ -712,8 +742,13 @@ export function Player({ list, start, onClose }: Props) {
     const saved = store.get<SavedPos | null>(posKey(it), null);
 
     v.src = it.url;
-    v.defaultPlaybackRate = prefsRef.current.speed;
-    v.playbackRate = prefsRef.current.speed;
+    // Playback speed is per-video: every newly opened item starts at normal speed.
+    setRate(1);
+    setPrefs((current) => ({ ...current, speed: 1 }));
+    prefsRef.current = { ...prefsRef.current, speed: 1 };
+    store.set("speed", 1);
+    v.defaultPlaybackRate = 1;
+    v.playbackRate = 1;
     applyVolume();
     setPaused(v.paused);
     setSpin("Loading movie…");
@@ -753,6 +788,8 @@ export function Player({ list, start, onClose }: Props) {
         a.removeAttribute("src");
         a.load();
       }
+      audioGraph.current?.context.close().catch(() => {});
+      audioGraph.current = null;
       try {
         const d = document as Document & { webkitExitFullscreen?: () => void };
         if (fsEl()) (document.exitFullscreen || d.webkitExitFullscreen)?.call(document);
@@ -779,6 +816,9 @@ export function Player({ list, start, onClose }: Props) {
     runtimeRef: P, pointsRef: pts, stageRef: stage, videoRef: vid, lockedRef, menuRef, preferencesRef: prefsRef,
     showUnlock, closeMenu, toggleFullscreen: toggleFs, seekBy, togglePlay, toggleControls, skipFx,
     setZoom, zoomHud, showHud, setVolume, saveVolume: saveVol, seekTo, wake,
+    setTemporarySpeed: (speed) => { const video = vid.current; if (video) { video.playbackRate = speed; showHud(`${speed}×`, "Hold to boost"); } },
+    getPlaybackRate: () => vid.current?.playbackRate || 1,
+    isPlaying: () => !!vid.current && !vid.current.paused,
   });
 
   usePlayerWheelZoom(stage, stepZoom, bumpVolume);
@@ -834,6 +874,7 @@ export function Player({ list, start, onClose }: Props) {
           playsInline
           className="absolute inset-0 size-full bg-black object-contain [transform-origin:50%_50%]"
           onPlay={() => {
+            audioGraph.current?.context.resume().catch(() => {});
             setPaused(false);
             wake();
             audPlay();
@@ -1023,10 +1064,11 @@ export function Player({ list, start, onClose }: Props) {
               <input
                 type="range"
                 min={0}
-                max={1}
+                max={2}
                 step={0.05}
                 value={muted ? 0 : prefs.volume}
-                aria-label="Volume"
+                aria-label="Volume (up to 200%)"
+                title={`${Math.round(prefs.volume * 100)}%`}
                 className="w-[86px] accent-accent2 [@media(pointer:coarse)]:hidden"
                 onChange={(e) => {
                   const volume = Number(e.target.value);

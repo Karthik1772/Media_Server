@@ -10,7 +10,7 @@ interface PlayerPreferencesState {
 
 function readPreferences(): PlayerPreferences {
   return {
-    volume: clamp(Number(store.get("vol", 1)), 0, 1),
+    volume: clamp(Number(store.get("vol", 1)), 0, 2),
     muted: !!store.get("muted", false),
     speed: Number(store.get("speed", 1)) || 1,
     subSize: Number(store.get("subSize", 100)) || 100,
