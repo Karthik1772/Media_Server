@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Dialog } from "@/shared/components/ui/dialog";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
@@ -15,9 +16,10 @@ interface Props {
 
 /** "Change poster": search TMDB / Wikipedia, or paste a supported source link. */
 export function PosterModal({ item, path, onClose, onSaved }: Props) {
-  const { title, setTitle, year, setYear, link, setLink, results, busyId, busyLink, shaking, titleRef, search, submitLink, pick } =
+  const { title, setTitle, year, setYear, link, setLink, results, busyId, busyLink, busyUpload, shaking, titleRef, search, submitLink, pick, upload } =
     usePosterViewModel({ item, path, onSaved });
 
+  const fileRef = useRef<HTMLInputElement>(null);
   if (!item) return null;
 
   return (
@@ -67,7 +69,7 @@ export function PosterModal({ item, path, onClose, onSaved }: Props) {
 
       <p className="text-[13px] leading-[1.45] text-mute">
         Searches TMDB (posters come from media.themoviedb.org) and Wikipedia. Pick the right poster, or paste a link
-        below. Your choice is saved permanently and the automatic scan will never change it.
+        below. Poster editing is available for videos under 200 MB. Your choice is saved permanently and the automatic scan will never change it.
       </p>
 
       <div className="my-3.5 grid grid-cols-2 gap-2.5 min-[601px]:grid-cols-[repeat(auto-fill,minmax(150px,1fr))]">
@@ -115,6 +117,23 @@ export function PosterModal({ item, path, onClose, onSaved }: Props) {
           {results.message}. You can paste a TMDB or Wikipedia link instead.
         </p>
       )}
+
+      <div className="mt-4 grid gap-[9px] border-t border-line pt-4">
+        <span className="text-[13px] text-mute">Or use your own picture (JPG, PNG or WebP, up to 5 MB)</span>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          hidden
+          onChange={(e) => {
+            void upload(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <Button variant="secondary" busy={busyUpload} onClick={() => fileRef.current?.click()}>
+          Upload from this device
+        </Button>
+      </div>
 
       <form onSubmit={submitLink} className="mt-4 grid gap-[9px] border-t border-line pt-4">
         <label htmlFor="posterLink" className="text-[13px] text-mute">

@@ -84,6 +84,7 @@ POSTER_FOLDERS = (
 )  # videos in here get an official movie / show poster
 PREVIEW_FOLDERS = ("Photos",)  # videos in here get a preview frame ...
 PREVIEW_MAX_MB = 500  # ... but only up to this size; bigger ones show the default image
+POSTER_EDIT_MAX_MB = 200  # the "Change poster" button only works for videos smaller than this
 # Extracted audio tracks live in cache/audio; oldest files are pruned beyond this limit.
 AUDIO_CACHE_MAX_GB = 5
 
@@ -623,6 +624,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     title=str(data.get("title", ""))[:160],
                 )
                 return self._json_response({"ok": True, "poster": url})
+            if parsed.path == "/__api/poster-upload":  # the user's own picture, sent as raw bytes
+                q = urllib.parse.parse_qs(parsed.query)
+                key = posters.safe_key((q.get("key") or [""])[0])
+                title = (q.get("title") or [""])[0][:160]
+                url = posters.poster_upload(key, self._read_body(posters.MAX_IMAGE_BYTES), title)
+                return self._json_response({"ok": True, "poster": url})
             if parsed.path == "/__api/thumb":  # preview frame captured by the browser
                 q = urllib.parse.parse_qs(parsed.query)
                 key = posters.safe_key((q.get("key") or [""])[0])
@@ -1089,6 +1096,7 @@ def init_runtime(root):
         poster_folders=POSTER_FOLDERS,
         preview_folders=PREVIEW_FOLDERS,
         preview_max_mb=PREVIEW_MAX_MB,
+        poster_edit_max_mb=POSTER_EDIT_MAX_MB,
         tmdb_key=TMDB_API_KEY,
         audio_cache_max_gb=AUDIO_CACHE_MAX_GB,
         log_fn=poster_log,

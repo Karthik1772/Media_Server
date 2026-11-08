@@ -3,6 +3,7 @@ import { Card } from "@/features/library/view/Card";
 import type { Item, ViewMode } from "@/lib/types";
 import { fmtSize } from "@/lib/format";
 import { Skeleton } from "@/shared/components/ui/skeleton";
+import { FolderIcon } from "@/features/library/view/FolderIcon";
 
 interface Props {
   items: Item[];
@@ -22,47 +23,61 @@ const folderCols = "grid grid-cols-2 gap-3 min-[601px]:grid-cols-[repeat(auto-fi
 function FolderSection({ items, view, mediaMode, flashUrl, onOpen, onEditPoster }: Pick<Props, "view" | "mediaMode" | "flashUrl" | "onOpen" | "onEditPoster"> & { items: Item[] }) {
   if (!items.length) return null;
   return <section className="mb-8">
-    <h2 className="mb-3 text-sm font-semibold tracking-wide text-fg">Folders <span className="ml-1 text-xs font-normal text-mute">{items.length}</span></h2>
+    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-fg"><FolderIcon className="size-5 text-accent" />Folders <span className="ml-1 text-xs font-normal text-mute">{items.length}</span></h2>
     <div className={view === "list" ? "grid grid-cols-1 gap-2" : folderCols}>
       {items.map((item) => <Card key={item.url} item={item} mediaMode={mediaMode} view={view} reveal="now" flash={flashUrl === item.url} onOpen={onOpen} onEditPoster={onEditPoster} onMount={noop} onUnmount={noop} />)}
     </div>
   </section>;
 }
 
-function VideoTile({ item, onOpen, featured = false }: { item: Item; onOpen: (it: Item) => void; featured?: boolean }) {
+function VideoTile({ item, onOpen, onEditPoster, featured = false }: { item: Item; onOpen: (it: Item) => void; onEditPoster: (it: Item) => void; featured?: boolean }) {
   const image = item.poster || "";
-  return <button type="button" onClick={() => onOpen(item)} className={`group relative block shrink-0 overflow-hidden rounded-xl border border-white/10 bg-[#171717] text-left text-white ${featured ? "min-h-[230px] w-full" : "w-[142px] min-[700px]:w-[174px]"}`}>
-    <div className={featured ? "absolute inset-0" : "aspect-[2/3] w-full"}>
-      {image ? <img src={image} alt="" loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-zinc-700 to-black text-3xl">▶</div>}
-      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent" />
-    </div>
-    <div className={featured ? "absolute inset-x-0 bottom-0 p-5" : "p-2.5"}>
-      {featured && <div className="mb-1 text-[10px] uppercase tracking-[.2em] text-white/70">Featured</div>}
-      <div className="line-clamp-2 text-sm font-semibold">{item.name}</div>
-      <div className="mt-1 text-[10px] text-white/65">{fmtSize(item.size)}</div>
-    </div>
-    {featured && <span className="absolute right-5 bottom-5 grid size-12 place-items-center rounded-full border border-white/40 bg-black/40 text-xl">▶</span>}
-  </button>;
+  const wrap = featured ? "min-h-[230px] w-full" : "w-[142px] min-[700px]:w-[174px]";
+  return <div className={`group relative shrink-0 ${wrap}`}>
+    <button type="button" onClick={() => onOpen(item)} className={`relative block size-full overflow-hidden rounded-xl border border-line bg-panel2 text-left text-white ${featured ? "min-h-[230px]" : ""}`}>
+      <div className={featured ? "absolute inset-0" : "aspect-[2/3] w-full"}>
+        {image ? <img src={image} alt="" loading="lazy" className="size-full object-cover transition-transform duration-500 group-hover:scale-105" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-zinc-700 to-black text-3xl">▶</div>}
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent" />
+      </div>
+      <div className={featured ? "absolute inset-x-0 bottom-0 p-5" : "p-2.5"}>
+        {featured && <div className="mb-1 text-[10px] uppercase tracking-[.2em] text-white/70">Featured</div>}
+        <div className="line-clamp-2 text-sm font-semibold">{item.name}</div>
+        <div className="mt-1 text-[10px] text-white/65">{fmtSize(item.size)}</div>
+      </div>
+      {featured && <span className="absolute right-5 bottom-5 grid size-12 place-items-center rounded-full border border-white/40 bg-black/40 text-xl">▶</span>}
+    </button>
+    {item.editable && (
+      <button
+        type="button"
+        title="Change poster"
+        aria-label={`Change poster for ${item.name}`}
+        onClick={() => onEditPoster(item)}
+        className="absolute top-[7px] left-[7px] z-[4] size-[30px] cursor-pointer rounded-[9px] border border-white/35 bg-black/70 text-[17px] text-white opacity-90 hover:bg-accent2 hover:opacity-100 focus-visible:bg-accent2 focus-visible:opacity-100"
+      >
+        ✎
+      </button>
+    )}
+  </div>;
 }
 
-function VideoExperience({ items, onOpen }: { items: Item[]; onOpen: (it: Item) => void }) {
+function VideoExperience({ items, onOpen, onEditPoster }: { items: Item[]; onOpen: (it: Item) => void; onEditPoster: (it: Item) => void }) {
   if (!items.length) return null;
   const [featured, ...rest] = items;
   const recent = rest.slice(0, 5);
-  return <div className="stream-video-ui space-y-8 text-white">
+  return <div className="stream-video-ui space-y-8 text-fg">
     <section className="grid gap-4 min-[850px]:grid-cols-[minmax(0,1.7fr)_minmax(230px,.7fr)]">
-      <VideoTile item={featured} onOpen={onOpen} featured />
-      <div className="min-w-0 rounded-xl border border-white/10 bg-[#111] p-4">
+      <VideoTile item={featured} onOpen={onOpen} onEditPoster={onEditPoster} featured />
+      <div className="min-w-0 rounded-xl border border-line bg-panel p-4">
         <h2 className="mb-3 text-sm font-semibold">Now watching</h2>
         <div className="space-y-3">{(recent.length ? recent : [featured]).slice(0, 4).map((item) => <button key={item.url} onClick={() => onOpen(item)} className="flex w-full items-center gap-3 text-left">
-          <span className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-zinc-800">{item.poster && <img src={item.poster} alt="" className="size-full object-cover" />}<span className="absolute inset-0 grid place-items-center bg-black/20">▶</span></span>
-          <span className="min-w-0"><span className="block line-clamp-2 text-xs font-medium">{item.name}</span><span className="mt-1 block text-[10px] text-white/50">{fmtSize(item.size)}</span></span>
+          <span className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-panel3">{item.poster && <img src={item.poster} alt="" className="size-full object-cover" />}<span className="absolute inset-0 grid place-items-center bg-black/30 text-white">▶</span></span>
+          <span className="min-w-0"><span className="block line-clamp-2 text-xs font-medium">{item.name}</span><span className="mt-1 block text-[10px] text-mute">{fmtSize(item.size)}</span></span>
         </button>)}</div>
       </div>
     </section>
     <section>
-      <div className="mb-3 flex items-center justify-between"><h2 className="text-base font-semibold">Videos</h2><span className="text-xs text-white/45">{items.length} titles</span></div>
-      <div className="flex gap-3 overflow-x-auto pb-3">{items.map((item) => <VideoTile key={item.url} item={item} onOpen={onOpen} />)}</div>
+      <div className="mb-3 flex items-center justify-between"><h2 className="text-base font-semibold">Videos</h2><span className="text-xs text-mute">{items.length} titles</span></div>
+      <div className="flex gap-3 overflow-x-auto pb-3">{items.map((item) => <VideoTile key={item.url} item={item} onOpen={onOpen} onEditPoster={onEditPoster} />)}</div>
     </section>
   </div>;
 }
@@ -94,10 +109,10 @@ export function Grid({ items, view, mediaMode, leaving, skeleton, flashUrl, onOp
   const mixedMode = mediaMode === "mixed";
   return <div data-leaving={leaving} className="space-y-7">
     <FolderSection items={folders} view={view} mediaMode={mediaMode} flashUrl={flashUrl} onOpen={onOpen} onEditPoster={onEditPoster} />
-    {videoMode && <VideoExperience items={videos} onOpen={onOpen} />}
+    {videoMode && <VideoExperience items={videos} onOpen={onOpen} onEditPoster={onEditPoster} />}
     {photoMode && <PhotoExperience items={photos} onOpen={onOpen} />}
     {mixedMode && <>
-      {videos.length > 0 && <VideoExperience items={videos} onOpen={onOpen} />}
+      {videos.length > 0 && <VideoExperience items={videos} onOpen={onOpen} onEditPoster={onEditPoster} />}
       {photos.length > 0 && <PhotoExperience items={photos} onOpen={onOpen} />}
     </>}
     {!videoMode && !photoMode && !mixedMode && <div className={folderCols}>{other.map((item) => <Card key={item.url} item={item} view={view} reveal="now" flash={flashUrl === item.url} onOpen={onOpen} onEditPoster={onEditPoster} onMount={noop} onUnmount={noop} />)}</div>}

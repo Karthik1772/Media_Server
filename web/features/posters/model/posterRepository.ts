@@ -18,3 +18,20 @@ export async function savePoster(payload: Record<string, unknown>): Promise<{ po
   if (!response.ok || !result.ok) throw new Error(result.error || "Could not save poster.");
   return result;
 }
+
+/** Poster editing is limited to videos smaller than this (the server enforces the same limit). */
+export const POSTER_EDIT_MAX_BYTES = 200 * 1024 * 1024;
+export const POSTER_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Send a picture from the user's device as the poster. */
+export async function uploadPoster(videoKey: string, file: Blob, title: string): Promise<{ poster?: string }> {
+  const query = new URLSearchParams({ key: videoKey, title });
+  const response = await fetch("/__api/poster-upload?" + query, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.error || "Could not upload the picture.");
+  return result;
+}

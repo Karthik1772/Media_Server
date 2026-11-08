@@ -20,6 +20,7 @@ const config: Config = {
         accent: "var(--accent)",
         accent2: "var(--accent2)",
         line: "var(--line)",
+        "line-strong": "var(--line-strong)",
       },
       fontFamily: {
         sans: ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],

@@ -16,6 +16,7 @@ export interface Item {
   heic?: boolean;
   capture?: boolean; // the browser should grab a preview frame
   scope?: string; // "poster" for movie folders
+  editable?: boolean; // poster can be changed (videos under 200 MB only; the server decides)
   hint?: string; // "tv" | "movie"
   mediaMode?: "video" | "photo" | "mixed" | "collections";
   mediaCounts?: { photos: number; videos: number };

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { NavLink } from "@/shared/components/NavLink";
+import { FolderIcon } from "@/features/library/view/FolderIcon";
 import { Badge } from "@/shared/components/ui/badge";
 import type { Item, ViewMode } from "@/lib/types";
 import { asset } from "@/lib/motion";
@@ -197,9 +198,14 @@ export function Card({ item: it, mediaMode, view, reveal, flash, onOpen, onEditP
         {it.folderPreview ? (
           <img src={it.folderPreview} alt="" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover opacity-90 transition-transform duration-300 group-hover:scale-[1.025]" />
         ) : (
-          <span className={ico}>{folderMode === "photo" ? "▧" : folderMode === "video" ? "▶" : "▰"}</span>
+          <FolderIcon className="relative z-[1] size-16 text-white/90 drop-shadow-[0_2px_6px_rgba(0,0,0,.5)]" />
         )}
         <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent" />
+        {it.folderPreview && (
+          <span className="absolute top-2 left-2 z-[2] grid size-7 place-items-center rounded-lg border border-white/20 bg-black/55 text-white">
+            <FolderIcon className="size-4" />
+          </span>
+        )}
         <span className="absolute bottom-2 left-2 z-[2] rounded-md border border-white/20 bg-black/55 px-2 py-1 text-[9px] font-semibold tracking-[.14em] text-white">{modeLabel}</span>
         <Badge className={badgePos}>{it.count} items</Badge>
       </div>
@@ -237,7 +243,7 @@ export function Card({ item: it, mediaMode, view, reveal, flash, onOpen, onEditP
             <i className="block h-full bg-accent" style={{ width: p + "%" }} />
           </div>
         )}
-        {posterScope && (
+        {it.editable && (
           <button
             type="button"
             title="Change poster"

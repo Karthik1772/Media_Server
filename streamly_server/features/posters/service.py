@@ -103,6 +103,7 @@ THUMB_INDEX_PATH = ""
 POSTER_SCOPE = set()
 PREVIEW_SCOPE = set()
 PREVIEW_MAX = 500 * 1024 * 1024
+POSTER_EDIT_MAX = 200 * 1024 * 1024  # posters can only be edited on videos smaller than this
 TMDB_KEY = ""
 FFMPEG = None
 FFPROBE = None
@@ -148,7 +149,9 @@ def configure(
     tmdb_key,
     log_fn,
     audio_cache_max_gb=5,
+    poster_edit_max_mb=200,
 ):
+    global POSTER_EDIT_MAX
     global ROOT, FILMS_DIR, SHORT_DIR, PHOTO_DIR, VIEW_DIR, SUB_DIR, AUDIO_DIR
     global POSTER_INDEX_PATH, THUMB_INDEX_PATH, POSTER_SCOPE, PREVIEW_SCOPE, PREVIEW_MAX
     global TMDB_KEY, FFMPEG, FFPROBE, PHOTO_EXT, AUDIO_CACHE_MAX, ROUTES, _log
@@ -166,6 +169,7 @@ def configure(
     POSTER_SCOPE = {n.lower() for n in poster_folders}
     PREVIEW_SCOPE = {n.lower() for n in preview_folders}
     PREVIEW_MAX = int(preview_max_mb) * 1024 * 1024
+    POSTER_EDIT_MAX = int(poster_edit_max_mb) * 1024 * 1024
     AUDIO_CACHE_MAX = int(float(audio_cache_max_gb) * 1024**3)
     TMDB_KEY = (tmdb_key or os.environ.get("TMDB_API_KEY", "")).strip()
     FFMPEG = shutil.which("ffmpeg")
@@ -1702,6 +1706,7 @@ def describe_video(key, filename, size, mtime):
         "poster": "",
         "capture": False,
         "big": False,
+        "editable": size < POSTER_EDIT_MAX,  # the user may change the poster (videos under 200 MB only)
         "hint": info["kind"] if info else "movie",
         "q_title": info["variants"][0] if info else os.path.splitext(filename)[0],
         "q_year": info["year"] if info and info["year"] else "",
@@ -1718,6 +1723,11 @@ def describe_video(key, filename, size, mtime):
                 and not FFMPEG
                 and thumb_state(key, size, mtime) == "todo"
             )
+        # a poster the user chose by hand always wins over the automatic preview frame
+        if out["editable"] and (POSTERS.get(key) or {}).get("source") in MANUAL:
+            chosen = poster_url(key)
+            if chosen:
+                out["poster"], out["capture"] = chosen, False
     return out
 
 
@@ -1956,10 +1966,7 @@ def resolve_link(link):
 
 def poster_apply(action, key, *, candidate_id="", link="", title="", year=""):
     """Manual poster choice -> permanent. Returns the poster URL ('' after a reset)."""
-    abs_for_key(key)
-    if scope_of(key) != "poster":
-        raise ValueError("Posters are only used for videos in the movies folder.")
-    keys = sibling_keys(key)
+    keys = _editable_keys(key)
     now = int(time.time())
     if action == "select":
         cand = CANDIDATES.get(candidate_id)
@@ -1994,6 +2001,31 @@ def poster_apply(action, key, *, candidate_id="", link="", title="", year=""):
         entry = {"file": "", "source": "fallback", "title": title, "checked": now}
     else:
         raise ValueError("Unknown poster action.")
+    with LOCK:
+        for k in keys:
+            POSTERS[k] = dict(entry)
+        save_posters()
+    return poster_url(key)
+
+
+def _editable_keys(key):
+    """Check the video may have its poster edited; return every key that shares the poster."""
+    full = abs_for_key(key)
+    if os.stat(full).st_size >= POSTER_EDIT_MAX:
+        raise ValueError(
+            f"Posters can only be edited for videos under {POSTER_EDIT_MAX // 1048576} MB."
+        )
+    # episodes of one show share a poster (only in the movies folder)
+    return sibling_keys(key) if scope_of(key) == "poster" else [key]
+
+
+def poster_upload(key, data, title=""):
+    """The user's own picture (JPG / PNG / WebP up to 5 MB) becomes the poster."""
+    keys = _editable_keys(key)
+    fname = save_image_bytes(data)
+    if not fname:
+        raise ValueError("Use a JPG, PNG or WebP picture under 5 MB.")
+    entry = {"file": fname, "source": "upload", "title": title, "checked": int(time.time())}
     with LOCK:
         for k in keys:
             POSTERS[k] = dict(entry)

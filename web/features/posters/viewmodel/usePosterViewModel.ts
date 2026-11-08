@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import type { Item } from "@/lib/types";
 import { pretty } from "@/lib/format";
 import { toast } from "@/hooks/use-toast";
-import { savePoster, searchPosters } from "@/features/posters/model/posterRepository";
+import { POSTER_UPLOAD_MAX_BYTES, savePoster, searchPosters, uploadPoster } from "@/features/posters/model/posterRepository";
 import type { PosterCandidate, PosterSearchResults } from "@/features/posters/model/poster.types";
 
 interface Options {
@@ -19,6 +19,7 @@ export function usePosterViewModel({ item, path, onSaved }: Options) {
   const [results, setResults] = useState<PosterSearchResults>({ state: "idle" });
   const [busyId, setBusyId] = useState("");
   const [busyLink, setBusyLink] = useState(false);
+  const [busyUpload, setBusyUpload] = useState(false);
   const [shaking, setShaking] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
 
@@ -30,6 +31,7 @@ export function usePosterViewModel({ item, path, onSaved }: Options) {
     setResults({ state: "idle" });
     setBusyId("");
     setBusyLink(false);
+    setBusyUpload(false);
     const focusTimer = window.setTimeout(() => titleRef.current?.focus(), 0);
     return () => window.clearTimeout(focusTimer);
   }, [item]);
@@ -91,5 +93,21 @@ export function usePosterViewModel({ item, path, onSaved }: Options) {
     void post({ action: "select", candidate_id: candidate.id }).finally(() => setBusyId(""));
   }, [post]);
 
-  return { title, setTitle, year, setYear, link, setLink, results, busyId, busyLink, shaking, titleRef, search, submitLink, pick };
+  const upload = useCallback(async (file: File | undefined) => {
+    if (!item || !file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { shake(); return toast("Choose a JPG, PNG or WebP picture"); }
+    if (file.size > POSTER_UPLOAD_MAX_BYTES) { shake(); return toast("That picture is over 5 MB - choose a smaller one"); }
+    setBusyUpload(true);
+    try {
+      const result = await uploadPoster(item.key || posterKey(item), file, title.trim());
+      onSaved(item, result.poster || "", item.hint === "tv");
+    } catch (error) {
+      toast((error as Error).message || "Upload failed");
+      shake();
+    } finally {
+      setBusyUpload(false);
+    }
+  }, [item, onSaved, posterKey, title, shake]);
+
+  return { title, setTitle, year, setYear, link, setLink, results, busyId, busyLink, busyUpload, shaking, titleRef, search, submitLink, pick, upload };
 }
