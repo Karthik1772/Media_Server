@@ -28,7 +28,10 @@ venv/
 Thumbs.db
 desktop.ini
 
-# Next.js build artifacts and dependencies
-ui/node_modules/
-ui/.next/
-ui/out/
+# --- front end: the React source in web/ is the only UI code; its build is generated ---
+web/node_modules/
+web/*.tsbuildinfo
+web/.next/
+web/out/
+web/next-env.d.ts
+web/.next-dev.log

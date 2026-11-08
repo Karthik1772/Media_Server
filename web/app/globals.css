@@ -1,0 +1,146 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+/* ---------- design tokens (same palette as before) ---------- */
+:root {
+  --bg: #0b0b10;
+  --panel: #15151d;
+  --panel2: #1d1d28;
+  --text: #f2f2f7;
+  --mute: #8d8da0;
+  --accent: #ff4d6d;
+  --accent2: #7c5cff;
+  --line: #262633;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #f4f4f8;
+  --panel: #fff;
+  --panel2: #e9ebf2;
+  --text: #14141c;
+  --mute: #6b6b80;
+  --line: #dcdce6;
+  color-scheme: light;
+}
+
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* keyframes used straight from CSS below (the other animations live in tailwind.config.ts) */
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+@keyframes rip {
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* ---------- base ---------- */
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  html,
+  body {
+    margin: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
+  }
+  body.lock {
+    overflow: hidden;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--accent2);
+    outline-offset: 2px;
+  }
+  img,
+  video {
+    max-width: 100%;
+  }
+  select {
+    font: inherit;
+  }
+}
+
+/* ---------- small custom utilities Tailwind has no class for ---------- */
+@utility shimmer-bg {
+  background-image: linear-gradient(100deg, var(--panel2) 30%, rgba(128, 128, 150, 0.28) 50%, var(--panel2) 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+@utility safe-top {
+  padding-top: calc(10px + env(safe-area-inset-top));
+}
+@utility safe-bottom {
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
+
+/* press ripple (created by lib/ripple.ts) */
+.rip {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  background: currentColor;
+  opacity: 0.28;
+  transform: scale(0);
+  animation: rip 0.6s ease-out forwards;
+}
+
+/* theme wipe (View Transitions API) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2147483646;
+}
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition:
+    background-color 0.4s ease,
+    color 0.4s ease,
+    border-color 0.4s ease,
+    box-shadow 0.4s ease !important;
+}
+
+/* ---------- respect "reduce motion" ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

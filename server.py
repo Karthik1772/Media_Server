@@ -1,22 +1,29 @@
 """
-Streamify  -  run with:  python server.py
+Streamly  -  run with:  python server.py
 
 Serves the folder you start it from, with:
   * a responsive Netflix-style web UI (phone / tablet / laptop)
-    -> files live in ./ui  (index.html, style.css, app.js)
+    -> the web UI is the Next.js + React + Tailwind app in ./web, run live (hot reload);
+       `python server.py --prod` serves its production build instead
   * HTTP Range support (video seeking works)
   * one-line colored request logs + session summary
 No extra packages needed (Python 3.8+).
 """
 
+import atexit
 import html
+import http.client
 import http.server
 import io
 import ipaddress
 import json
 import os
 import re
+import select
+import shutil
+import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -41,7 +48,7 @@ MAG = "\033[95m"
 ABORT_COL = "\033[38;5;208m"  # orange: different from yellow RESPONSE, red ERROR and the magenta VIDEO label
 CYN = "\033[96m"
 
-PORT = 5797
+PORT = 2904
 CHUNK = 64 * 1024
 NAME_W = 36  # visible width of the PATH column
 RES_W = 66  # visible width of the RESULT column
@@ -50,10 +57,15 @@ LOG_LIFECYCLE = True  # True : REQUEST + RESPONSE + DONE/ABORTED lines per reque
 LINE_W = 10 + 10 + 17 + 8 + NAME_W + 2 + RES_W + 2 + 8
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = (
-    "Streamify"  # shown in the console banner, the browser tab and the page header
+    "Streamly"  # shown in the console banner, the browser tab and the page header
 )
-UI_DIR = os.path.join(BASE_DIR, "ui")
-UI_PREFIX = "/__ui/"  # URL prefix that maps to the ./ui folder
+WEB_DIR = os.path.join(BASE_DIR, "web")  # the React + Tailwind project (the only UI code)
+UI_DIR = os.path.join(WEB_DIR, "out")  # what `next build` writes (static export, --prod mode)
+UI_PREFIX = "/__ui/"  # URL prefix the UI is served under
+# "dev"   = run the Next.js app live with its dev server (hot reload, no build step)  <- default
+# "build" = serve the production build in web/dist   (python server.py --prod)
+UI_MODE = "dev"
+UI_DEV_PORT = int(os.environ.get("STREAMLY_UI_PORT", "5173"))  # the Next.js dev server listens on this PC only
 
 # ---- who may connect --------------------------------------------------------
 # True: connections are accepted only from this PC and from private network addresses
@@ -107,7 +119,7 @@ load_env(os.path.join(BASE_DIR, ".env"))
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 
 # Folder that gets shared. By default it is the folder ABOVE this one, so with
-# E:\Streamify\server.py you share E:\  (Films, Web Series, photos ...).
+# E:\Streamly\server.py you share E:\  (Films, Web Series, photos ...).
 # Change it to any path you like, e.g.  MEDIA_ROOT = r"E:\"
 # You can also override it per run:   python server.py "D:\Movies"
 MEDIA_ROOT = os.path.dirname(BASE_DIR)
@@ -183,38 +195,24 @@ def phrase(code):
         return ""
 
 
-def local_ips():
-    ips = []
+def local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
-        primary = s.getsockname()[0]
+        ip = s.getsockname()[0]
         s.close()
-        if primary and primary != "127.0.0.1":
-            ips.append(primary)
+        return ip
     except OSError:
-        pass
-    try:
-        for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
-            if not addr.startswith("127.") and addr not in ips:
-                ips.append(addr)
-    except OSError:
-        pass
-    return ips or ["127.0.0.1"]
-
-
-def local_ip():
-    return local_ips()[0]
+        return "127.0.0.1"
 
 
 def banner(ip):
     w = 60
-    rows = [("Folder", os.getcwd())]
-    for i, addr in enumerate(local_ips()):
-        label = "Phone" if i == 0 else "Alt IP"
-        rows.append((label, f"http://{addr}:{PORT}"))
-    rows.extend([
+    rows = [
+        ("Folder", os.getcwd()),
+        ("Phone", f"http://{ip}:{PORT}"),
         ("Local", f"http://localhost:{PORT}"),
+        ("UI", "live (Next.js dev server, hot reload)" if UI_MODE == "dev" else "production build"),
         (
             "Access",
             (
@@ -223,7 +221,7 @@ def banner(ip):
                 else "ANYONE who can reach this PC"
             ),
         ),
-    ])
+    ]
     print(f"{CYN}╭{'─' * w}╮{R}")
     print(f"{CYN}│{R}{B}{('  ' + APP_NAME.upper()).ljust(w)}{R}{CYN}│{R}")
     print(f"{CYN}├{'─' * w}┤{R}")
@@ -287,14 +285,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".json": "application/json",
     }
 
-    # ---------- serve ./ui files under /__ui/ and Next.js /_next/ ----------
+    # ---------- serve ./ui files under /__ui/ ----------
     def translate_path(self, path):
         p = unquote(path.split("?", 1)[0].split("#", 1)[0])
-        if p.startswith("/_next/"):
-            rel = [x for x in p.split("/") if x not in ("", ".", "..")]
-            return os.path.join(UI_DIR, "out", *rel)
-        if (p == "/" or p == "/index.html") and os.path.isfile(os.path.join(UI_DIR, "out", "index.html")):
-            return os.path.join(UI_DIR, "out", "index.html")
         if p.startswith(UI_PREFIX):
             rel = [
                 x for x in p[len(UI_PREFIX) :].split("/") if x not in ("", ".", "..")
@@ -319,12 +312,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         rp = getattr(self, "req_path", "")
         ok = (getattr(self, "status", 0) or 0) < 400  # never cache an error page
-        if ok and rp.startswith(UI_PREFIX + "assets/"):
+        if UI_MODE == "dev" and rp.startswith(UI_PREFIX):
+            # live mode: file names don't change when the code does, so never keep a copy
+            self.send_header("Cache-Control", "no-store")
+        elif ok and rp.startswith(UI_PREFIX + "img/"):
             self.send_header(
                 "Cache-Control", "public, max-age=86400"
             )  # static images: a day
         elif ok and rp.startswith(posters.CACHE_PREFIXES):
             # file names contain a hash of the picture / size / date, so a new file = a new URL
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        elif ok and rp.startswith(UI_PREFIX + "_next/static/"):
+            # the build gives these files a hash in their name, so a new build = a new URL
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         elif rp.startswith(UI_PREFIX):
             self.send_header("Cache-Control", "no-cache")  # edits show up on refresh
@@ -456,14 +455,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return None
         try:
-            with open(os.path.join(UI_DIR, "index.html"), encoding="utf-8") as fh:
-                template = fh.read()
-        except OSError:
-            self.send_error(
-                HTTPStatus.INTERNAL_SERVER_ERROR, "ui/index.html is missing"
-            )
-            return None
-        try:
             names = os.listdir(path)
         except OSError:
             self.send_error(HTTPStatus.NOT_FOUND, "No permission to list directory")
@@ -522,11 +513,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         data = data.replace("<", "\\u003c")
         folder = self.req_path.strip("/").split("/")[-1]
         title = f"{folder} · {APP_NAME}" if folder else APP_NAME
-        payload = (
-            template.replace("__TITLE__", html.escape(title))
-            .replace("__APPNAME__", html.escape(APP_NAME))
-            .replace("__DATA__", data)
-        ).encode("utf-8", "replace")
+        try:
+            payload = render_ui_page(title, data).encode("utf-8", "replace")
+        except OSError as exc:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"UI not available: {exc}")
+            return None
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -568,7 +559,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
-        if not (parsed.path.startswith("/__api/") or parsed.path == "/api/files"):
+        if UI_MODE == "dev" and parsed.path.startswith(UI_PREFIX):
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                return self.tunnel_ui()
+            return self.proxy_ui()
+        if UI_MODE == "dev" and self.headers.get("RSC"):
+            # Next.js re-fetches the page it is on (a folder URL, here) after each code change;
+            # the answer it wants comes from its own dev server, not from the folder listing
+            return self.proxy_ui(path=UI_PREFIX + ("?" + parsed.query if parsed.query else ""))
+        if not parsed.path.startswith("/__api/"):
             return super().do_GET()
         self._api_start(parsed)
         q = urllib.parse.parse_qs(parsed.query)
@@ -577,68 +576,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return (q.get(name) or [""])[0].strip()
 
         try:
-            if parsed.path == "/api/files":
-                requested = arg("path") or "/"
-                rel = unquote(requested).replace("\\", "/").strip("/")
-                target = os.path.abspath(os.path.join(os.getcwd(), rel))
-                media_root = os.path.abspath(os.getcwd())
-                if target != media_root and not target.startswith(media_root + os.sep):
-                    return self._json_response({"error": "Invalid path"}, 400)
-                protected = os.path.abspath(BASE_DIR)
-                if target == protected or target.startswith(protected + os.sep):
-                    return self._json_response({"error": "Folder not found"}, 404)
-                if not os.path.isdir(target):
-                    return self._json_response({"error": "Folder not found"}, 404)
-                items = []
-                try:
-                    names = os.listdir(target)
-                except OSError:
-                    return self._json_response({"error": "No permission to list directory"}, 403)
-                for name in names:
-                    if name.startswith(".") or name.lower() in HIDDEN:
-                        continue
-                    full = os.path.join(target, name)
-                    if os.path.normcase(os.path.abspath(full)) == os.path.normcase(BASE_DIR):
-                        continue
-                    try:
-                        st = os.stat(full)
-                    except OSError:
-                        continue
-                    is_dir = os.path.isdir(full)
-                    if is_dir:
-                        kind, count = "folder", 0
-                        try:
-                            count = sum(1 for child in os.listdir(full)
-                                        if not child.startswith(".") and child.lower() not in HIDDEN)
-                        except OSError:
-                            pass
-                    else:
-                        content_type = self.guess_type(full)
-                        kind = ("video" if content_type.startswith("video/") else
-                                "image" if content_type.startswith("image/") else
-                                "audio" if content_type.startswith("audio/") else "file")
-                    relative = os.path.relpath(full, os.getcwd()).replace(os.sep, "/")
-                    item = {
-                        "name": name,
-                        "dir": is_dir,
-                        "kind": kind,
-                        "size": 0 if is_dir else st.st_size,
-                        "mtime": int(st.st_mtime),
-                        "count": count if is_dir else 0,
-                        "url": "/" + quote(relative, safe="/") + ("/" if is_dir else ""),
-                    }
-                    if not is_dir and kind in ("video", "image"):
-                        key = relative
-                        if kind == "video":
-                            item.update(posters.describe_video(key, name, st.st_size, st.st_mtime))
-                        else:
-                            item.update(posters.describe_image(key, name, st.st_size, st.st_mtime))
-                    items.append(item)
-                return self._json_response({
-                    "path": "/" + rel if rel else "/",
-                    "items": items,
-                    "app": APP_NAME,
-                })
             if parsed.path == "/__api/poster-search":
                 try:
                     results = posters.poster_candidates(
@@ -722,11 +659,90 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ---------- request handling ----------
     def do_HEAD(self):
+        if UI_MODE == "dev" and self.path.split("?")[0].startswith(UI_PREFIX):
+            return self.proxy_ui(head=True)
         super().do_HEAD()
         self.emit()
 
+    def _ui_request_state(self):
+        """Handlers are reused on a keep-alive connection: forget the previous request."""
+        self.t0 = time.time()
+        self.sent = 0
+        self.range_ = None
+        self.status = None
+        self.logged = False
+        self.file_size = 0
+        self.clen = None
+        self.crange = None
+        self.err_note = ""
+        self.resp_logged = False
+        self.req_path = unquote(self.path.split("?")[0])
+        self.fs_path = WEB_DIR
+        self.quiet = True
+
+    def proxy_ui(self, head=False, path=None):
+        """Dev mode: hand /__ui/... requests to the Next.js dev server and relay its answer."""
+        self._ui_request_state()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", UI_DEV_PORT, timeout=60)
+            # pass the browser's headers on (Next.js marks its "refresh" requests with a few of them),
+            # except the ones that only make sense between the browser and this server
+            drop = {"host", "connection", "keep-alive", "upgrade", "accept-encoding", "te", "origin", "referer", "content-length", "transfer-encoding"}
+            fwd = {k: v for k, v in self.headers.items() if k.lower() not in drop}
+            conn.request("HEAD" if head else "GET", path or self.path, headers=fwd)
+            resp = conn.getresponse()
+            body = resp.read()
+            conn.close()
+        except OSError:
+            self.send_error(HTTPStatus.BAD_GATEWAY, "The web UI dev server is not running")
+            self.emit()
+            return
+        self.send_response(resp.status)
+        skip = ("connection", "transfer-encoding", "keep-alive", "content-length", "date", "server", "cache-control")
+        for k, v in resp.getheaders():
+            if k.lower() not in skip:
+                self.send_header(k, v)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()  # adds our own Cache-Control: no-cache for the UI
+        if not head and resp.status not in (204, 304):
+            self.wfile.write(body)
+        self.emit()
+
+    def tunnel_ui(self):
+        """Dev mode: relay the hot-reload WebSocket between the browser and the Next.js dev server."""
+        self._ui_request_state()
+        try:
+            up = socket.create_connection(("127.0.0.1", UI_DEV_PORT), timeout=5)
+        except OSError:
+            self.send_error(HTTPStatus.BAD_GATEWAY, "The web UI dev server is not running")
+            return
+        lines = [f"{self.command} {self.path} {self.request_version}"]
+        for k, v in self.headers.items():
+            if k.lower() == "host":
+                v = f"127.0.0.1:{UI_DEV_PORT}"
+            elif k.lower() == "origin":
+                v = f"http://127.0.0.1:{UI_DEV_PORT}"
+            lines.append(f"{k}: {v}")
+        self.close_connection = True
+        client = self.connection
+        try:
+            up.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+            up.settimeout(None)
+            client.settimeout(None)
+            while True:
+                ready, _, _ = select.select([client, up], [], [], 30)
+                for sock in ready:
+                    data = sock.recv(65536)
+                    if not data:
+                        return
+                    (up if sock is client else client).sendall(data)
+        except OSError:
+            pass
+        finally:
+            up.close()
+
     def is_program_file(self):
-        if self.req_path.startswith((UI_PREFIX, "/_next/") + posters.CACHE_PREFIXES) or self.req_path in ("/", "/index.html"):
+        if self.req_path.startswith((UI_PREFIX,) + posters.CACHE_PREFIXES):
             return False  # these prefixes map to the few files the page really needs
         p = os.path.normcase(os.path.abspath(self.fs_path))
         b = os.path.normcase(BASE_DIR)
@@ -746,7 +762,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.req_path = unquote(self.path.split("?")[0])
         self.fs_path = self.translate_path(self.path)
         self.quiet = self.req_path.startswith(
-            (UI_PREFIX, "/_next/") + posters.CACHE_PREFIXES
+            (UI_PREFIX,) + posters.CACHE_PREFIXES
         ) or self.req_path.endswith("favicon.ico")
         rng = self.headers.get("Range")
         if LOG_LIFECYCLE and not self.quiet:
@@ -909,6 +925,176 @@ def poster_log(msg):
         print(f"  {CYN}◆{R} {DIM}{msg}{R}", flush=True)
 
 
+def read_ui_page():
+    """The page Next.js made: live from its dev server, or web/out/index.html after a build."""
+    if UI_MODE == "dev":
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", UI_DEV_PORT, timeout=90)
+            conn.request("GET", UI_PREFIX, headers={"Accept": "text/html"})
+            resp = conn.getresponse()
+            body = resp.read()
+            conn.close()
+        except OSError as exc:
+            raise OSError("the web UI dev server is not running") from exc
+        if resp.status != 200:
+            raise OSError(f"the web UI dev server answered {resp.status}")
+        return body.decode("utf-8")
+    with open(os.path.join(UI_DIR, "index.html"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def render_ui_page(title, data):
+    """The page for one folder: Next's page with this folder's listing (and title) filled in."""
+    page = read_ui_page()
+    page = page.replace("__DATA__", data, 1)  # app/layout.tsx leaves this placeholder
+    if "<title" not in page:
+        page = page.replace("</head>", f"<title>{html.escape(title)}</title></head>", 1)
+    return page
+
+
+_ui_proc = None
+
+
+def ui_dev_listening():
+    """True when something accepts connections on the dev server's port."""
+    try:
+        socket.create_connection(("127.0.0.1", UI_DEV_PORT), timeout=1).close()
+        return True
+    except OSError:
+        return False
+
+
+def stop_ui_dev():
+    global _ui_proc
+    proc, _ui_proc = _ui_proc, None
+    if not proc or proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":  # npm.cmd starts node as a child: take the whole tree down
+            subprocess.call(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+
+def start_ui_dev():
+    """Run `npm run dev` (Next.js) in the background and wait until it answers."""
+    global _ui_proc
+    npm = shutil.which("npm")
+    if not npm:
+        print(f"{RED}\u2716 The web UI needs Node.js (npm), which was not found.{R}")
+        print("  Install Node.js from https://nodejs.org, then run  python server.py  again.")
+        raise SystemExit(1)
+    if ui_dev_listening():
+        print(f"{DIM}Web UI dev server already running on port {UI_DEV_PORT} - using it.{R}\n")
+        return
+    shell = os.name == "nt"  # npm is npm.cmd on Windows
+    env = dict(os.environ, NEXT_TELEMETRY_DISABLED="1")
+    if not os.path.isdir(os.path.join(WEB_DIR, "node_modules")):
+        print(f"{DIM}Installing the web UI packages (first run only) ...{R}")
+        if subprocess.call([npm, "install", "--no-audit", "--no-fund"], cwd=WEB_DIR, shell=shell, env=env) != 0:
+            print(f"{RED}\u2716 `npm install` failed - see the messages above.{R}")
+            raise SystemExit(1)
+    log_path = os.path.join(WEB_DIR, ".next-dev.log")
+    log = open(log_path, "w", encoding="utf-8")
+    extra = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    _ui_proc = subprocess.Popen(
+        [npm, "run", "dev", "--", "-p", str(UI_DEV_PORT), "-H", "127.0.0.1"],
+        cwd=WEB_DIR,
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        shell=shell,
+        **extra,
+    )
+    atexit.register(stop_ui_dev)
+    print(f"{DIM}Starting the web UI (Next.js dev server) ...{R}", end="", flush=True)
+    ready = False
+    for _ in range(240):  # up to ~2 minutes (the first start compiles the app)
+        if _ui_proc.poll() is not None:
+            break
+        if ui_dev_listening():
+            try:  # the first request compiles the page, so give it time
+                conn = http.client.HTTPConnection("127.0.0.1", UI_DEV_PORT, timeout=120)
+                conn.request("GET", UI_PREFIX)
+                ready = conn.getresponse().status == 200
+                conn.close()
+            except OSError:
+                pass
+            break
+        time.sleep(0.5)
+    if ready:
+        print(f" {GRN}ready{R}\n")
+        return
+    print()
+    print(f"{RED}\u2716 The web UI dev server did not start. Its log ({log_path}):{R}")
+    try:
+        print("".join(open(log_path, encoding="utf-8", errors="replace").readlines()[-15:]))
+    except OSError:
+        pass
+    stop_ui_dev()
+    raise SystemExit(1)
+
+
+def ui_is_current():
+    """True when the production build exists and is newer than every source file in web/."""
+    index = os.path.join(UI_DIR, "index.html")
+    if not os.path.isfile(index) or not os.path.isdir(os.path.join(UI_DIR, "_next")):
+        return False
+    built = os.path.getmtime(index)
+    for folder, dirs, files in os.walk(WEB_DIR):
+        dirs[:] = [d for d in dirs if d not in ("node_modules", "out", ".next")]
+        for name in files:
+            if name.endswith((".tsbuildinfo", ".log")) or name in ("next-env.d.ts", "package-lock.json"):
+                continue  # generated by tools, not edited by hand
+            try:
+                if os.path.getmtime(os.path.join(folder, name)) > built + 1:
+                    return False
+            except OSError:
+                pass
+    return True
+
+
+def ensure_ui_built():
+    """Build the web app (web/ -> web/out) when it is missing or older than its source.
+
+    Needs Node.js once. After that, `python server.py --prod` rebuilds only when something
+    in web/ changed.
+    """
+    if ui_is_current():
+        return
+    npm = shutil.which("npm")
+    if not npm:
+        print(f"{RED}\u2716 The web UI needs to be built, but Node.js (npm) was not found.{R}")
+        print(f"  Install Node.js from https://nodejs.org, then run  python server.py  again.")
+        raise SystemExit(1)
+    shell = os.name == "nt"  # npm is npm.cmd on Windows
+    env = dict(os.environ, NEXT_TELEMETRY_DISABLED="1")
+    print(f"{DIM}Building the web UI (Next.js + Tailwind) ...{R}")
+    steps = []
+    if not os.path.isdir(os.path.join(WEB_DIR, "node_modules")):
+        steps.append([npm, "install", "--no-audit", "--no-fund"])
+    steps.append([npm, "run", "build"])
+    for cmd in steps:
+        if subprocess.call(cmd, cwd=WEB_DIR, shell=shell, env=env) != 0:
+            print(f"{RED}\u2716 `{' '.join(cmd[1:])}` failed - see the messages above.{R}")
+            raise SystemExit(1)
+    if not ui_is_current():
+        print(f"{RED}\u2716 The build finished but {UI_DIR} is incomplete.{R}")
+        raise SystemExit(1)
+    print(f"{DIM}Web UI ready.{R}\n")
+
+
 def init_runtime(root):
     """Share `root` and set up posters/previews (also used by the tests)."""
     os.chdir(root)  # the server shares the current directory
@@ -925,27 +1111,21 @@ def init_runtime(root):
 
 
 if __name__ == "__main__":
-    has_next_out = os.path.isfile(os.path.join(UI_DIR, "out", "index.html"))
-    has_legacy = all(
-        os.path.isfile(os.path.join(UI_DIR, f))
-        for f in ("index.html", "style.css", "app.js")
-    )
-    if not has_next_out and not has_legacy:
-        print(f"{RED}✖ Missing UI files in {UI_DIR}{R}")
-        raise SystemExit(1)
-    folder_arg = None
-    port_arg = None
-    for arg in sys.argv[1:]:
-        if arg.isdigit() and port_arg is None:
-            port_arg = int(arg)
-        elif folder_arg is None:
-            folder_arg = arg
-    if port_arg:
-        PORT = port_arg
-    root = os.path.abspath(folder_arg) if folder_arg else MEDIA_ROOT
+    args = sys.argv[1:]
+    if "--prod" in args or "--build" in args or os.environ.get("STREAMLY_UI") == "build":
+        UI_MODE = "build"
+    args = [a for a in args if a not in ("--prod", "--build", "--dev")]
+    root = os.path.abspath(args[0]) if args else MEDIA_ROOT
     if not os.path.isdir(root):
         print(f"{RED}✖ Folder not found: {root}{R}")
         raise SystemExit(1)
+    for _sig in ("SIGTERM", "SIGBREAK"):  # kill / closing the window: still stop the UI server
+        if hasattr(signal, _sig):
+            signal.signal(getattr(signal, _sig), lambda *_: sys.exit(0))
+    if UI_MODE == "build":
+        ensure_ui_built()
+    else:
+        start_ui_dev()
     init_runtime(root)
     banner(local_ip())
     posters.start_background()  # poster + preview scans run in the background
