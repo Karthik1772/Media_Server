@@ -1,0 +1,230 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+/* ---------- Streamly cinematic design tokens ---------- */
+:root {
+  color-scheme: dark;
+  --bg: #0d1014;
+  --panel: #151a20;
+  --panel2: #1c232b;
+  --panel3: #242d37;
+  --text: #edf1f5;
+  --mute: #98a3af;
+  --accent: #8aa8ff;
+  --accent2: #6e8ff0;
+  --line: rgba(164, 180, 198, 0.14);
+  --line-strong: rgba(164, 180, 198, 0.24);
+  --surface-glass: rgba(18, 23, 29, 0.78);
+  --shadow-soft: 0 12px 36px rgba(0, 0, 0, 0.22);
+  --motion-fast: 140ms;
+  --motion-standard: 180ms;
+  --motion-slow: 230ms;
+  --ease-standard: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5f8;
+  --panel: #ffffff;
+  --panel2: #e9edf3;
+  --panel3: #dfe5ed;
+  --text: #17202a;
+  --mute: #687585;
+  --accent: #5278dc;
+  --accent2: #4167ca;
+  --line: rgba(40, 55, 72, 0.12);
+  --line-strong: rgba(40, 55, 72, 0.2);
+  --surface-glass: rgba(248, 250, 252, 0.86);
+  --shadow-soft: 0 12px 36px rgba(25, 42, 62, 0.09);
+}
+
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* keyframes used straight from CSS below (the other animations live in tailwind.config.ts) */
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+@keyframes rip {
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* ---------- base ---------- */
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  [hidden] {
+    display: none !important;
+  }
+  html,
+  body {
+    margin: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
+  }
+  body.lock {
+    overflow: hidden;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--accent2);
+    outline-offset: 2px;
+  }
+  img,
+  video {
+    max-width: 100%;
+  }
+  select {
+    font: inherit;
+  }
+}
+
+/* ---------- small custom utilities Tailwind has no class for ---------- */
+@utility shimmer-bg {
+  background-image: linear-gradient(100deg, var(--panel2) 30%, rgba(128, 128, 150, 0.28) 50%, var(--panel2) 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+@utility safe-top {
+  padding-top: calc(10px + env(safe-area-inset-top));
+}
+@utility safe-bottom {
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
+
+/* ---------- immersive UI foundations ---------- */
+html {
+  background: var(--bg);
+  scroll-behavior: smooth;
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 50% -18rem, color-mix(in srgb, var(--accent) 10%, transparent), transparent 48rem),
+    var(--bg);
+  transition: background-color var(--motion-standard) var(--ease-standard), color var(--motion-standard) var(--ease-standard);
+}
+
+::selection {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.library-hero {
+  isolation: isolate;
+  background: linear-gradient(112deg, color-mix(in srgb, var(--panel) 94%, var(--accent) 6%), var(--panel));
+}
+
+.library-hero-art {
+  z-index: -2;
+  opacity: 0.34;
+  filter: saturate(0.78) blur(1px);
+  transform: scale(1.025);
+}
+
+.library-hero::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--panel) 97%, transparent) 0%, color-mix(in srgb, var(--panel) 84%, transparent) 54%, color-mix(in srgb, var(--panel) 58%, transparent) 100%),
+    radial-gradient(ellipse at 82% 10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 54%);
+  content: "";
+  pointer-events: none;
+}
+
+.library-hero::after {
+  position: absolute;
+  z-index: -1;
+  inset: auto 0 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 38%, transparent), transparent);
+  content: "";
+}
+
+.surface-glass {
+  background: var(--surface-glass);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+}
+
+.surface-elevated {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+}
+
+.interactive-surface {
+  transition: background-color var(--motion-standard) var(--ease-standard),
+    border-color var(--motion-standard) var(--ease-standard),
+    color var(--motion-standard) var(--ease-standard),
+    transform var(--motion-standard) var(--ease-standard),
+    box-shadow var(--motion-standard) var(--ease-standard);
+}
+
+/* press ripple (created by lib/ripple.ts) */
+.rip {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  background: currentColor;
+  opacity: 0.18;
+  transform: scale(0);
+  animation: rip 0.28s ease-out forwards;
+}
+
+/* theme wipe (View Transitions API) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2147483646;
+}
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition:
+    background-color 0.19s ease,
+    color 0.19s ease,
+    border-color 0.19s ease,
+    box-shadow 0.19s ease !important;
+}
+
+/* ---------- respect "reduce motion" ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

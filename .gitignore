@@ -4,6 +4,7 @@
 !.env.example
 
 # --- generated caches (rebuilt automatically by the server) ---------------
+cache/
 films_thumbnails/
 short_video_thumbnails/
 photo_thumbnails/
@@ -27,3 +28,11 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- front end: the React source in web/ is the only UI code; its build is generated ---
+web/node_modules/
+web/*.tsbuildinfo
+web/.next/
+web/out/
+web/next-env.d.ts
+web/.next-dev.log
