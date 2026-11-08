@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run build"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -13,7 +14,8 @@
     "next": "15.2.8",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "tailwind-merge": "^3.0.0"
+    "tailwind-merge": "^3.0.0",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.0",

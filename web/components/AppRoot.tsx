@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Library } from "@/components/Library";
-import { Providers } from "@/components/Providers";
-import { Splash } from "@/components/Splash";
+import { Library } from "@/features/library/view/Library";
+import { Providers } from "@/providers/Providers";
+import { Splash } from "@/shared/components/Splash";
 import { readLibraryData } from "@/lib/data";
 import { installRipple } from "@/lib/ripple";
 
