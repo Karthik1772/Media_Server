@@ -16,13 +16,7 @@ export interface Item {
   heic?: boolean;
   capture?: boolean; // the browser should grab a preview frame
   scope?: string; // "poster" for movie folders
-  editable?: boolean; // poster can be changed (videos under 200 MB only; the server decides)
   hint?: string; // "tv" | "movie"
-  mediaMode?: "video" | "photo" | "mixed" | "collections";
-  mediaCounts?: { photos: number; videos: number };
-  nestedFolders?: number;
-  folderPreview?: string;
-  scanTruncated?: boolean;
   q_year?: string | number;
   q_title?: string;
 }
@@ -31,9 +25,6 @@ export interface LibraryData {
   path: string;
   items: Item[];
   app?: string;
-  mediaMode?: "video" | "photo" | "mixed" | "collections";
-  mediaCounts?: { photos: number; videos: number; audio?: number; other?: number; subfolders?: number; directPhotos?: number; directVideos?: number; directAudio?: number; directOther?: number };
-  scanTruncated?: boolean;
 }
 
 export type SortKey = "name" | "date" | "size";

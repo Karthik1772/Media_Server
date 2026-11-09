@@ -15,7 +15,7 @@ export function needsConv(a?: AudioTrack): boolean {
   return !!mime && !document.createElement("audio").canPlayType(mime);
 }
 
-export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4];
+export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 export const SUB_COLORS = ["#ffffff", "#ffe066", "#7be0ff", "#9dff8a"];
 export const FITS = [
   ["contain", "Fit", "Whole picture, bars if the shape differs"],

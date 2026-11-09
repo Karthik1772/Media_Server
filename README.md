@@ -37,9 +37,9 @@ The Next.js configuration retains the existing static export and `/__ui` base pa
 ## Phase 2 backend layout
 
 The Python entry point remains `python server.py`. The entry point now delegates to
-`streamly_server/application.py`; the poster/media implementation lives under
-`streamly_server/features/posters/service.py`, with `posters.py` retained as a
-backward-compatible import shim. Shared cache migration helpers live under
+`streamly_server/application.py`; the complete poster/media implementation lives in
+`streamly_server/posters.py`. There is no root-level `posters.py` and no duplicate
+poster implementation under `features/`. Shared cache migration helpers live under
 `streamly_server/shared/cache/`.
 
 All generated server-side cache data is stored under `cache/` beside the server
@@ -56,7 +56,7 @@ Streamly chooses the presentation for each selected folder from the media it con
 
 ## Python package structure
 
-The Python backend is organized under `streamly_server/`. `server.py` remains the launcher. `streamly_server/application.py` owns HTTP/server lifecycle; feature code is separated into `features/library`, `features/playback`, and `features/posters`; shared cache logic is in `shared/cache`. The stable poster API is available at `streamly_server.posters`. The root `posters.py` is retained only as a backwards-compatible shim for existing imports. See [`streamly_server/ARCHITECTURE.md`](streamly_server/ARCHITECTURE.md).
+The Python backend is organized under `streamly_server/`. `server.py` remains the launcher. `streamly_server/application.py` owns HTTP/server lifecycle; feature code is separated into `features/library` and `features/playback`; the canonical poster/media engine lives at `streamly_server/posters.py`, and shared cache logic is in `streamly_server/shared/cache`. There is no root-level `posters.py`. See [`streamly_server/ARCHITECTURE.md`](streamly_server/ARCHITECTURE.md).
 
 To select a different media root, pass it as the first argument, for example `python server.py "E:\\photos"` or `python server.py "E:\\Vedios"`.
 
@@ -69,7 +69,7 @@ Run backend checks from the project root:
 
 ```bash
 python -m unittest discover -s tests -v
-python -m py_compile server.py posters.py streamly_server/application.py streamly_server/posters.py streamly_server/features/*/*.py streamly_server/shared/cache/*.py
+python -m py_compile server.py streamly_server/application.py streamly_server/posters.py streamly_server/features/*/*.py streamly_server/shared/cache/*.py
 ```
 
 For full release verification, also run `npm ci` and `npm run check` from `web/`, then complete the manual media/player checks in `web/TESTING.md` on the Windows machine that contains the media library.

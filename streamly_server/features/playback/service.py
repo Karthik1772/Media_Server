@@ -3,7 +3,7 @@
 The low-level media probing and extraction state is shared with the poster/cache
 feature for now, so this module delegates to that single configured engine.
 """
-from streamly_server.features.posters import service as media_cache
+from streamly_server import posters as media_cache
 
 
 def tracks_info(key):
