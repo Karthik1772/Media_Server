@@ -1,9 +1,19 @@
 """
-Streamly poster and media-cache feature.
+posters.py - every cache of the media server (posters, thumbnails, audio / subtitle tracks).
+Imported by server.py. Pillow (pip install pillow) and ffmpeg are optional but recommended.
 
-Generated data is centralized under cache/: posters, video previews, photo
-thumbnails/previews, subtitles, and extracted audio. Pillow and ffmpeg are
-optional but recommended. Legacy top-level cache folders are migrated safely.
+Cache folders (created next to server.py):
+  films_thumbnails        movie / show posters (Vedios folder). Looked up ONCE per title
+                          (TMDB if you add a free key, else Wikipedia); never changes unless
+                          you change it yourself (search, or paste a TMDB / Wikipedia link).
+  short_video_thumbnails  one preview frame per video in the Photos folder (up to
+                          PREVIEW_MAX_MB), made once by ffmpeg or by the browser.
+  photo_thumbnails        360 px WebP/JPEG thumbnails of photos - the grid loads these
+                          instead of the full-size originals (Pillow, else ffmpeg).
+  photo_previews          1600 px copies used by the full-screen photo viewer.
+  subtitle_cache          embedded / external subtitles converted to WebVTT.
+  audio_track_cache       extra audio languages extracted to AAC so the player can switch.
+Everything else, and anything without a confident match -> the static default image.
 """
 
 import difflib
@@ -22,8 +32,6 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
-
-from streamly_server.shared.cache import migrate_cache_folders
 
 try:  # optional - fast photo thumbnails:  pip install pillow
     from PIL import Image, ImageOps
@@ -57,7 +65,6 @@ IMAGE_HOSTS = (
     "upload.wikimedia.org",
 )  # posters may only come from here
 HIDDEN_DIRS = {
-    "cache",
     "poster_cache",
     "thumb_cache",
     "films_thumbnails",
@@ -125,17 +132,19 @@ def log(msg):
 # setup + disk index
 # ----------------------------------------------------------------------------
 def _migrate_old_caches(base_dir):
-    """Move all legacy cache folders beneath the single cache/ root safely."""
-    return migrate_cache_folders(base_dir, {
-        "films_thumbnails": "posters",
-        "poster_cache": "posters",
-        "short_video_thumbnails": "video_previews",
-        "thumb_cache": "video_previews",
-        "photo_thumbnails": "photo_thumbnails",
-        "photo_previews": "photo_previews",
-        "subtitle_cache": "subtitles",
-        "audio_track_cache": "audio",
-    }, log)
+    """poster_cache -> films_thumbnails, thumb_cache -> short_video_thumbnails.
+    Nothing already cached is lost or downloaded again."""
+    for old, new in (
+        ("poster_cache", "films_thumbnails"),
+        ("thumb_cache", "short_video_thumbnails"),
+    ):
+        src, dst = os.path.join(base_dir, old), os.path.join(base_dir, new)
+        if os.path.isdir(src) and not os.path.exists(dst):
+            try:
+                os.rename(src, dst)
+                log(f"Cache folder renamed: {old} -> {new}")
+            except OSError as exc:
+                log(f"Couldn't rename {old} to {new} ({exc}) - starting {new} empty.")
 
 
 def configure(
@@ -154,13 +163,13 @@ def configure(
     global TMDB_KEY, FFMPEG, FFPROBE, PHOTO_EXT, AUDIO_CACHE_MAX, ROUTES, _log
     _log = log_fn or print
     ROOT = os.path.abspath(root)
-    cache_root = _migrate_old_caches(base_dir)
-    FILMS_DIR = os.path.join(cache_root, "posters")
-    SHORT_DIR = os.path.join(cache_root, "video_previews")
-    PHOTO_DIR = os.path.join(cache_root, "photo_thumbnails")
-    VIEW_DIR = os.path.join(cache_root, "photo_previews")
-    SUB_DIR = os.path.join(cache_root, "subtitles")
-    AUDIO_DIR = os.path.join(cache_root, "audio")
+    _migrate_old_caches(base_dir)
+    FILMS_DIR = os.path.join(base_dir, "films_thumbnails")
+    SHORT_DIR = os.path.join(base_dir, "short_video_thumbnails")
+    PHOTO_DIR = os.path.join(base_dir, "photo_thumbnails")
+    VIEW_DIR = os.path.join(base_dir, "photo_previews")
+    SUB_DIR = os.path.join(base_dir, "subtitle_cache")
+    AUDIO_DIR = os.path.join(base_dir, "audio_track_cache")
     POSTER_INDEX_PATH = os.path.join(FILMS_DIR, "posters.json")
     THUMB_INDEX_PATH = os.path.join(SHORT_DIR, "thumbs.json")
     POSTER_SCOPE = {n.lower() for n in poster_folders}
