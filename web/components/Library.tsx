@@ -12,9 +12,7 @@ import { toast } from "@/hooks/use-toast";
 import type { Item, LibraryData, SortKey, ViewMode } from "@/lib/types";
 import { store } from "@/lib/store";
 import { fmtSize, nat } from "@/lib/format";
-import { setBusy } from "@/lib/busy";
 import { queueCapture } from "@/lib/capture";
-import { reducedMotion } from "@/lib/motion";
 
 interface Overlay {
   kind: "video" | "image";
@@ -23,7 +21,11 @@ interface Overlay {
 }
 
 /** The folder view: breadcrumbs, title, search / sort / layout, and the grid of cards. */
-export function Library({ data }: { data: LibraryData }) {
+export function Library({ data: initialData }: { data: LibraryData }) {
+  // the folder being shown; opening another folder swaps this in place (no page reload)
+  const [data, setData] = useState<LibraryData>(initialData);
+  const curPath = useRef(location.pathname); // URL path of the folder currently shown
+  const navId = useRef(0); // lets a newer navigation cancel an older one
   const searchRef = useRef<HTMLInputElement>(null);
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
@@ -32,8 +34,6 @@ export function Library({ data }: { data: LibraryData }) {
   const [view, setView] = useState<ViewMode>(() => store.get("view", "grid"));
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [posterTarget, setPosterTarget] = useState<Item | null>(null);
-  const [flashUrl, setFlashUrl] = useState("");
-  const [leaving, setLeaving] = useState(false);
   const [skeleton, setSkeleton] = useState(false);
 
   const appName = data.app || "Streamly";
@@ -95,33 +95,45 @@ export function Library({ data }: { data: LibraryData }) {
     items.forEach((it) => queueCapture(it, onPoster));
   }, [items]);
 
-  /* ---------- opening a folder: cards fade out, placeholders show while the next page loads ---------- */
-  const go = useCallback((href: string) => {
-    if (reducedMotion()) {
-      location.href = href;
-      return;
-    }
-    setBusy("nav", true);
-    setLeaving(true);
-    setTimeout(() => {
-      setSkeleton(true);
-      setTimeout(() => {
-        location.href = href;
-      }, 40);
-    }, 170);
+  /* ---------- opening a folder: the listing is fetched and swapped in, no page reload ---------- */
+  const fetchFolder = useCallback(async (pathname: string): Promise<LibraryData> => {
+    const r = await fetch("/__api/library?path=" + encodeURIComponent(pathname), { cache: "no-store" });
+    if (!r.ok) throw new Error("folder not found");
+    const j = (await r.json()) as LibraryData;
+    if (!j || !Array.isArray(j.items)) throw new Error("bad listing");
+    return j;
   }, []);
 
-  // coming back with the browser's Back button must not show the placeholders
-  useEffect(() => {
-    const onShow = (e: PageTransitionEvent) => {
-      if (!e.persisted) return;
-      setBusy("nav", false);
-      setLeaving(false);
-      setSkeleton(false);
-    };
-    addEventListener("pageshow", onShow);
-    return () => removeEventListener("pageshow", onShow);
+  const showFolder = useCallback((next: LibraryData, pathname: string) => {
+    curPath.current = pathname;
+    setData(next);
+    setQuery("");
+    setSkeleton(false);
+    scrollTo(0, 0);
   }, []);
+
+  const openFolder = useCallback(
+    async (href: string, push: boolean) => {
+      const u = new URL(href, location.href);
+      const id = ++navId.current;
+      // placeholders only if the listing is slow to arrive
+      const slow = setTimeout(() => id === navId.current && setSkeleton(true), 200);
+      try {
+        const next = await fetchFolder(u.pathname);
+        if (id !== navId.current) return; // a newer navigation took over
+        if (push) history.pushState({ folder: 1 }, "", u.pathname + u.search + u.hash);
+        showFolder(next, u.pathname);
+      } catch {
+        if (id !== navId.current) return;
+        location.href = href; // fall back to a normal page load
+      } finally {
+        clearTimeout(slow);
+      }
+    },
+    [fetchFolder, showFolder],
+  );
+
+  const go = useCallback((href: string) => void openFolder(href, true), [openFolder]);
 
   /* ---------- player / viewer overlay (Back closes it) ---------- */
   const overlayOpen = useRef(false);
@@ -137,10 +149,12 @@ export function Library({ data }: { data: LibraryData }) {
     const onPop = () => {
       overlayOpen.current = false;
       hideOverlay();
+      // Back / Forward between folders: show that folder without reloading the page
+      if (location.pathname !== curPath.current) void openFolder(location.href, false);
     };
     addEventListener("popstate", onPop);
     return () => removeEventListener("popstate", onPop);
-  }, [hideOverlay]);
+  }, [hideOverlay, openFolder]);
 
   const openMedia = useCallback(
     (it: Item) => {
@@ -166,20 +180,25 @@ export function Library({ data }: { data: LibraryData }) {
   }, [overlay, posterTarget]);
 
   /* ---------- poster picker ---------- */
-  const onPosterSaved = useCallback((it: Item, poster: string, wasShow: boolean) => {
-    it.poster = poster;
-    setFlashUrl(it.url);
-    setPosterTarget(null);
-    // every episode of the show got the new poster - reload to show them all
-    if (wasShow) setTimeout(() => location.reload(), 700);
-    toast(poster ? "Poster saved" : "Poster reset to default");
-  }, []);
-
-  useEffect(() => {
-    if (!flashUrl) return;
-    const t = setTimeout(() => setFlashUrl(""), 1600);
-    return () => clearTimeout(t);
-  }, [flashUrl]);
+  const onPosterSaved = useCallback(
+    (it: Item, poster: string, wasShow: boolean) => {
+      it.poster = poster;
+      setPosterTarget(null);
+      // every episode of the show got the new poster - refresh the listing to show them all
+      if (wasShow) {
+        const pathname = location.pathname;
+        setTimeout(() => {
+          fetchFolder(pathname)
+            .then((next) => {
+              if (location.pathname === pathname) setData(next);
+            })
+            .catch(() => location.reload());
+        }, 700);
+      }
+      toast(poster ? "Poster saved" : "Poster reset to default");
+    },
+    [fetchFolder],
+  );
 
   /* ---------- "/" focuses the search ---------- */
   useEffect(() => {
@@ -213,12 +232,11 @@ export function Library({ data }: { data: LibraryData }) {
           <Empty query={query.trim() ? query : ""} />
         ) : (
           <Grid
+            key={data.path}
             items={items}
             view={view}
             hasPosters={hasPosters}
-            leaving={leaving}
             skeleton={skeleton}
-            flashUrl={flashUrl}
             onOpen={openMedia}
             onEditPoster={setPosterTarget}
           />

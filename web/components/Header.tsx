@@ -2,7 +2,6 @@ import { forwardRef } from "react";
 import { NavLink } from "@/components/NavLink";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Input } from "@/components/ui/input";
-import { showSplash } from "@/components/Splash";
 import { asset } from "@/lib/motion";
 
 interface Props {
@@ -21,9 +20,7 @@ export const Header = forwardRef<HTMLInputElement, Props>(function Header({ appN
         <img
           src={asset("favicon.png")}
           alt=""
-          className={`block size-8 shrink-0 animate-logo-pop rounded-lg ${
-            showSplash ? "[animation-delay:2.1s,2.9s]" : ""
-          }`}
+            className="block size-8 shrink-0 rounded-lg"
         />
         <b className="hidden overflow-hidden bg-linear-90 from-accent to-accent2 bg-clip-text text-ellipsis text-transparent min-[421px]:block">
           {appName}

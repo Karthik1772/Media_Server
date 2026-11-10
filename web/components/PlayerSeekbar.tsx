@@ -115,7 +115,7 @@ export function Seekbar({ video, scrubbing, onSeek, onScrub }: Props) {
         }}
       >
         <div
-          className={`absolute inset-x-0 top-1/2 overflow-hidden rounded bg-white/28 transition-[height,margin-top] duration-100 ${
+          className={`absolute inset-x-0 top-1/2 overflow-hidden rounded bg-white/28 ${
             drag
               ? "-mt-[3px] h-1.5 [@media(pointer:coarse)]:-mt-1 [@media(pointer:coarse)]:h-2"
               : "-mt-0.5 h-1 group-hover/seek:-mt-[3px] group-hover/seek:h-1.5"
@@ -128,7 +128,7 @@ export function Seekbar({ video, scrubbing, onSeek, onScrub }: Props) {
           />
         </div>
         <i
-          className={`absolute top-1/2 -mt-[7px] -ml-[7px] size-3.5 rounded-full bg-white shadow-[0_1px_4px_#0009] transition-transform duration-150 group-hover/seek:scale-100 group-focus-visible/seek:scale-100 [@media(pointer:coarse)]:scale-100 ${
+          className={`absolute top-1/2 -mt-[7px] -ml-[7px] size-3.5 rounded-full bg-white shadow-[0_1px_4px_#0009] group-hover/seek:scale-100 group-focus-visible/seek:scale-100 [@media(pointer:coarse)]:scale-100 ${
             drag ? "scale-100" : "scale-0"
           }`}
           style={{ left: p + "%" }}

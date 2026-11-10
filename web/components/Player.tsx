@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils";
 import { store } from "@/lib/store";
 import { clamp, fmtTime, posKey, pretty, safeTime, wait, type SavedPos } from "@/lib/format";
 import { decodeSubtitleBytes, parseCues } from "@/lib/srt";
-import { setBusy } from "@/lib/busy";
 
 /* The browser still decodes the video; everything you see and tap is ours - seek bar, touch
    gestures, speed, fit, lock, picture-in-picture, fullscreen and an Audio / Subtitles menu.
@@ -453,9 +452,6 @@ export function Player({ list, start, onClose }: Props) {
     (which === "A" ? setMsgA : setMsgS)(text);
   }
 
-  useEffect(() => setBusy("msg", !!(msgA || msgS)), [msgA, msgS]);
-  useEffect(() => setBusy("spin", spin !== null), [spin]);
-
   // only choices the user makes are saved; automatic picks are worked out again each time
   function saveTrk(what: "a" | "s") {
     const it = itemNow();
@@ -827,8 +823,6 @@ export function Player({ list, start, onClose }: Props) {
       Object.values(t).forEach((x) => clearTimeout(x));
       P.current.token++;
       P.current.prepId++;
-      setBusy("spin", false);
-      setBusy("msg", false);
       if (v) {
         v.onloadedmetadata = null;
         v.pause();
@@ -1184,7 +1178,7 @@ export function Player({ list, start, onClose }: Props) {
 
         {/* subtitles */}
         <div
-          className="pointer-events-none absolute inset-x-0 z-[2] px-[6%] text-center leading-[1.4] transition-[bottom] duration-200"
+          className="pointer-events-none absolute inset-x-0 z-[2] px-[6%] text-center leading-[1.4]"
           style={{
             bottom: controlsHidden || locked ? "7%" : "calc(118px + env(safe-area-inset-bottom))",
             fontSize: `calc(clamp(15px, 2.4vw, 30px) * ${prefs.subSize / 100})`,
@@ -1208,7 +1202,7 @@ export function Player({ list, start, onClose }: Props) {
 
       {/* top bar */}
       <div
-        className={`absolute inset-x-0 top-0 z-[5] flex items-center gap-2 bg-linear-to-b from-[#000c] to-[#0000] px-3 pt-[calc(10px+env(safe-area-inset-top))] pb-[26px] transition-[opacity,transform] duration-[350ms] ease-[cubic-bezier(.2,.8,.2,1)] ${
+        className={`absolute inset-x-0 top-0 z-[5] flex items-center gap-2 bg-linear-to-b from-[#000c] to-[#0000] px-3 pt-[calc(10px+env(safe-area-inset-top))] pb-[26px] ${
           locked ? "hidden" : ""
         } ${controlsHidden ? "pointer-events-none -translate-y-3.5 opacity-0" : ""}`}
       >
@@ -1261,7 +1255,7 @@ export function Player({ list, start, onClose }: Props) {
       {/* bottom controls */}
       <div
         ref={ctrl}
-        className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] bg-linear-to-b from-[#0000] to-[#000d] px-2 pt-[34px] pb-[calc(8px+env(safe-area-inset-bottom))] transition-[opacity,transform] duration-[350ms] ease-[cubic-bezier(.2,.8,.2,1)] min-[641px]:px-3.5 ${
+        className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] bg-linear-to-b from-[#0000] to-[#000d] px-2 pt-[34px] pb-[calc(8px+env(safe-area-inset-bottom))]  min-[641px]:px-3.5 ${
           locked ? "hidden" : ""
         } ${controlsHidden ? "translate-y-4 opacity-0" : ""}`}
       >

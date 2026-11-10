@@ -191,7 +191,7 @@ export function PosterModal({ item, path, onClose, onSaved }: Props) {
               key={c.id}
               type="button"
               onClick={() => pick(c)}
-              className={`relative flex min-w-0 cursor-pointer flex-col gap-2 rounded-xl border border-line bg-panel p-2 text-left text-fg hover:-translate-y-px hover:border-accent2 ${
+              className={`relative flex min-w-0 cursor-pointer flex-col gap-2 rounded-xl border border-line bg-panel p-2 text-left text-fg  hover:border-accent2 ${
                 busyId === c.id ? "pointer-events-none opacity-75" : ""
               }`}
             >

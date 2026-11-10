@@ -1,44 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { NavLink } from "@/components/NavLink";
 import { Badge } from "@/components/ui/badge";
 import type { Item, ViewMode } from "@/lib/types";
 import { asset } from "@/lib/motion";
 import { ext, fmtDate, fmtSize, hue, pretty, progress } from "@/lib/format";
 
-/* ---------- scroll reveal: one shared observer, cards fade up as they come into view ---------- */
-const revealers = new Map<Element, () => void>();
-let observer: IntersectionObserver | null = null;
-
-function observe(el: Element, reveal: () => void) {
-  if (!("IntersectionObserver" in window)) return reveal();
-  observer ??= new IntersectionObserver(
-    (entries) => {
-      let n = 0;
-      entries.forEach((en) => {
-        if (!en.isIntersecting) return;
-        const fn = revealers.get(en.target);
-        observer!.unobserve(en.target);
-        revealers.delete(en.target);
-        (en.target as HTMLElement).style.setProperty("--d", Math.min(n++, 12) * 40 + "ms");
-        fn?.();
-      });
-    },
-    { rootMargin: "0px 0px -4% 0px", threshold: 0.04 },
-  );
-  revealers.set(el, reveal);
-  observer.observe(el);
-}
-
-function unobserve(el: Element) {
-  revealers.delete(el);
-  observer?.unobserve(el);
-}
-
 /* ---------- small pieces ---------- */
 const badgePos = "absolute right-2 bottom-2 z-[2]";
 const ico = "relative z-[1] text-[34px] drop-shadow-[0_2px_6px_rgba(0,0,0,.5)]";
 
-/** An <img> that fades in once loaded; `fallback` is tried once if the first source fails. */
+/** An <img> that appears once loaded; `fallback` is tried once if the first source fails. */
 function FadeImg({
   src,
   fallback,
@@ -79,14 +50,12 @@ function FadeImg({
           setCurrent(fallback);
         } else setFailed(true);
       }}
-      className={`absolute inset-0 size-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-[1.07] ${
-        ld ? "opacity-100" : "opacity-0"
-      } ${className}`}
+      className={`absolute inset-0 size-full object-cover ${ld ? "opacity-100" : "opacity-0"} ${className}`}
     />
   );
 }
 
-/** Movie poster: when it changes the old one stays underneath until the new one has faded in. */
+/** Movie poster: when it changes the old one stays underneath until the new one has loaded. */
 function PosterImg({ src, onLoaded }: { src: string; onLoaded: () => void }) {
   const [layers, setLayers] = useState({ cur: src, prev: "", ld: false });
   const first = useRef(true);
@@ -117,19 +86,17 @@ function PosterImg({ src, onLoaded }: { src: string; onLoaded: () => void }) {
           setTimeout(() => setLayers((l) => ({ ...l, prev: "" })), 450);
         }}
         onError={() => setFailed(true)}
-        className={`absolute inset-0 z-[1] size-full object-cover transition-[opacity,transform] duration-300 group-hover:scale-[1.07] ${
-          layers.ld ? "opacity-100" : "opacity-0"
-        }`}
+        className={`absolute inset-0 z-[1] size-full object-cover ${layers.ld ? "opacity-100" : "opacity-0"}`}
       />
     </>
   );
 }
 
-/** Play button that fades in over a video/audio card on hover (hidden on touch screens). */
+/** Play button shown over a video/audio card on hover (hidden on touch screens). */
 function PlayBadge() {
   return (
-    <i className="pointer-events-none absolute inset-0 z-[2] bg-[radial-gradient(circle,rgba(0,0,0,.38),transparent_68%)] opacity-0 transition-opacity duration-[250ms] group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:hidden">
-      <span className="absolute top-1/2 left-1/2 -mt-7 -ml-7 size-14 scale-[.65] rounded-full bg-linear-135 from-accent to-accent2 shadow-[0_6px_24px_rgba(124,92,255,.55)] transition-transform duration-[350ms] ease-[cubic-bezier(.2,1.4,.4,1)] group-hover:scale-100 group-focus-visible:scale-100" />
+    <i className="pointer-events-none absolute inset-0 z-[2] bg-[radial-gradient(circle,rgba(0,0,0,.38),transparent_68%)] opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:hidden">
+      <span className="absolute top-1/2 left-1/2 -mt-7 -ml-7 size-14 rounded-full bg-linear-135 from-accent to-accent2 shadow-[0_6px_24px_rgba(124,92,255,.55)]" />
       <span className="absolute top-1/2 left-1/2 -mt-2.5 -ml-1.5 border-y-[10px] border-l-[17px] border-y-transparent border-l-white" />
     </i>
   );
@@ -139,34 +106,14 @@ function PlayBadge() {
 interface Props {
   item: Item;
   view: ViewMode;
-  /** "observe" = fade in when scrolled into view; "now" = it appeared because of a search/sort/view change */
-  reveal: "observe" | "now";
-  flash: boolean;
   onOpen: (it: Item) => void;
   onEditPoster: (it: Item) => void;
-  onMount: (key: string, el: HTMLElement) => void;
-  onUnmount: (key: string, el: HTMLElement) => void;
 }
 
-export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMount, onUnmount }: Props) {
+export function Card({ item: it, view, onOpen, onEditPoster }: Props) {
   const ref = useRef<HTMLAnchorElement>(null);
-  const [shown, setShown] = useState(reveal === "now");
-  const [loaded, setLoaded] = useState(false);
+  const [, setLoaded] = useState(false);
   const list = view === "list";
-
-  useLayoutEffect(() => {
-    const el = ref.current!;
-    onMount(it.url, el);
-    return () => onUnmount(it.url, el);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [it.url]);
-
-  useEffect(() => {
-    const el = ref.current!;
-    if (shown) return;
-    observe(el, () => setShown(true));
-    return () => unobserve(el);
-  }, [shown]);
 
   const isMedia = !it.dir && (it.kind === "video" || it.kind === "audio" || it.kind === "image");
   const sub = it.dir ? "Folder" : `${fmtSize(it.size)} · ${fmtDate(it.mtime)}`;
@@ -205,7 +152,6 @@ export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMo
     thumb = (
       <div className={base}>
         <FadeImg src={it.thumb || it.url} fallback={it.thumb ? it.url : undefined} onLoaded={() => setLoaded(true)} />
-        {!loaded && <Shimmer />}
         <Badge className={badgePos}>{ext(it)}</Badge>
       </div>
     );
@@ -218,7 +164,6 @@ export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMo
           style={{ backgroundImage: `url(${asset("video.jpg")})` }}
         />
         {it.poster && <PosterImg src={it.poster} onLoaded={() => setLoaded(true)} />}
-        {it.poster && !loaded && <Shimmer />}
         <PlayBadge />
         <Badge className={badgePos}>{ext(it)}</Badge>
         {p > 0 && (
@@ -261,10 +206,8 @@ export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMo
   }
 
   const style: CSSProperties = {};
-  const cls = `group/card group rounded-card border border-line bg-panel text-inherit no-underline overflow-hidden transition duration-200 hover:-translate-y-[3px] hover:border-accent2 hover:shadow-[0_10px_30px_rgba(0,0,0,.35)] light:hover:shadow-[0_10px_28px_rgba(20,20,40,.16)] active:scale-[.98] group-data-[leaving=true]/grid:-translate-y-2.5 group-data-[leaving=true]/grid:opacity-0 ${
+  const cls = `group/card group rounded-card border border-line bg-panel text-inherit no-underline overflow-hidden hover:border-accent2 hover:shadow-[0_10px_30px_rgba(0,0,0,.35)] light:hover:shadow-[0_10px_28px_rgba(20,20,40,.16)] ${
     list ? "flex items-center" : "block"
-  } ${!shown ? "translate-y-4 opacity-0" : reveal === "observe" || reveal === "now" ? "animate-card-in" : ""} ${
-    flash ? "animate-flash" : ""
   }`;
 
   const body = (
@@ -304,11 +247,5 @@ export function Card({ item: it, view, reveal, flash, onOpen, onEditPoster, onMo
     >
       {body}
     </a>
-  );
-}
-
-function Shimmer() {
-  return (
-    <i className="pointer-events-none absolute inset-0 z-[3] animate-shimmer bg-[linear-gradient(100deg,transparent_30%,rgba(255,255,255,.16)_50%,transparent_70%)] bg-[length:220%_100%]" />
   );
 }

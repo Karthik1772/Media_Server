@@ -152,7 +152,7 @@ export function StatusChip({ text, pct }: { text: string; pct: number | null }) 
       <em className="absolute inset-x-0 bottom-0 h-[3px] overflow-hidden bg-white/12">
         <i
           className={`block h-full bg-linear-90 from-accent to-accent2 ${
-            pct === null ? "w-2/5 animate-slide" : "transition-[width] duration-500"
+            pct === null ? "w-2/5 animate-slide" : ""
           }`}
           style={pct === null ? undefined : { width: pct + "%" }}
         />
@@ -179,7 +179,7 @@ export function PlayerButton({
       type="button"
       data-ripple
       {...rest}
-      className={`inline-grid flex-none cursor-pointer place-items-center border-0 p-0 font-[inherit] text-white transition-transform duration-150 active:scale-90 disabled:cursor-default disabled:bg-none disabled:opacity-30 ${
+      className={`inline-grid flex-none cursor-pointer place-items-center border-0 p-0 font-[inherit] text-white disabled:cursor-default disabled:bg-none disabled:opacity-30 ${
         big
           ? "mx-1.5 size-[52px] rounded-full bg-linear-135 from-accent to-accent2 hover:brightness-110"
           : txt
