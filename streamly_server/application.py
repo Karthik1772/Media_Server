@@ -74,7 +74,7 @@ UI_DEV_PORT = int(os.environ.get("STREAMLY_UI_PORT", "5173"))  # the Next.js dev
 # (your home / hotspot Wi-Fi: 192.168.x.x, 10.x.x.x, 172.16-31.x.x). Anything coming from
 # the internet is refused, even if the router or a tunnel lets it reach this PC.
 ONLY_LOCAL_NETWORK = True
-EXTRA_ALLOWED_NETWORKS = ()  # e.g. ("100.64.0.0/10",) to also allow a Tailscale VPN
+EXTRA_ALLOWED_NETWORKS = ("100.64.0.0/10",)  # Tailscale
 
 # ---- posters and previews ---------------------------------------------------
 # Folders are matched by name, anywhere inside the shared folder (not case-sensitive).
@@ -208,21 +208,64 @@ def local_ip():
         return "127.0.0.1"
 
 
+def tailscale_ip():
+    """This PC's Tailscale address (100.64.0.0/10), or None when Tailscale isn't connected.
+
+    Connecting a UDP socket sends nothing; it only makes the OS pick the network adapter it
+    would use. With Tailscale up, 100.100.100.100 is routed through the Tailscale adapter,
+    so the socket's own address is the Tailscale one. The `tailscale ip -4` command is the
+    fallback."""
+    tailnet = ipaddress.ip_network("100.64.0.0/10")
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("100.100.100.100", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        if ipaddress.ip_address(ip) in tailnet:
+            return ip
+    except (OSError, ValueError):
+        pass
+    exe = shutil.which("tailscale")
+    if not exe and os.name == "nt":
+        guess = os.path.join(
+            os.environ.get("ProgramFiles", r"C:\Program Files"), "Tailscale", "tailscale.exe"
+        )
+        exe = guess if os.path.isfile(guess) else None
+    if exe:
+        try:
+            out = subprocess.run(
+                [exe, "ip", "-4"], capture_output=True, text=True, timeout=3
+            ).stdout.split()
+            if out and ipaddress.ip_address(out[0]) in tailnet:
+                return out[0]
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    return None
+
+
 def banner(ip):
     w = 60
+    ts_ip = tailscale_ip()
+    if not ONLY_LOCAL_NETWORK:
+        access = "ANYONE who can reach this PC"
+    elif EXTRA_ALLOWED_NETWORKS:
+        access = "this network + Tailscale"
+    else:
+        access = "this network only"
     rows = [
         ("Folder", os.getcwd()),
         ("Phone", f"http://{ip}:{PORT}"),
         ("Local", f"http://localhost:{PORT}"),
-        ("UI", "live (Next.js dev server, hot reload)" if UI_MODE == "dev" else "production build"),
         (
-            "Access",
-            (
-                "this network only"
-                if ONLY_LOCAL_NETWORK
-                else "ANYONE who can reach this PC"
-            ),
+            "Remote",
+            f"http://{ts_ip}:{PORT}  (Tailscale)"
+            if ts_ip
+            else "not available - start Tailscale on this PC",
         ),
+        ("UI", "live (Next.js dev server, hot reload)" if UI_MODE == "dev" else "production build"),
+        ("Access", access),
     ]
     print(f"{CYN}╭{'─' * w}╮{R}")
     print(f"{CYN}│{R}{B}{('  ' + APP_NAME.upper()).ljust(w)}{R}{CYN}│{R}")
