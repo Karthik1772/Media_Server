@@ -1,563 +1,191 @@
 # Streamly
 
-A personal media server for browsing and streaming videos, photos, and audio from a folder on your computer. Streamly combines a Next.js and React interface with a lightweight Python HTTP server, so your existing media folders can be viewed through a browser on your computer, phone, or tablet.
+A personal media server for your own videos and photos. Run one Python command on a PC and browse, play, and view your library from any phone, tablet, or laptop on the same Wi-Fi.
 
-The server serves the selected media directory without reorganizing your original files. It also provides poster artwork, video previews, photo thumbnails, and playback support through a centralized local cache.
+- **Backend:** Python standard library only — no pip packages required. HTTP Range support makes video seeking work.
+- **Frontend:** Next.js 15, React 18, Tailwind CSS 4, and TypeScript, in <code>web/</code>.
+- **Local network only:** Requests from outside the local/private network are refused by default.
 
----
+## Features
 
-## Contents
+### Library
 
-- [Highlights](#highlights)
-- [How Streamly works](#how-streamly-works)
-- [Technology stack](#technology-stack)
-- [Requirements](#requirements)
-- [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [Media organization and folder views](#media-organization-and-folder-views)
-- [Posters, thumbnails, and cache](#posters-thumbnails-and-cache)
-- [Playback capabilities](#playback-capabilities)
-- [HTTP API](#http-api)
-- [Project structure](#project-structure)
-- [Development and verification](#development-and-verification)
-- [Network access and safety](#network-access-and-safety)
-- [Troubleshooting](#troubleshooting)
+- **Adaptive folders:** Each folder is classified from the media it contains, not just its name. Video folders get a cinematic poster grid, photo folders get album-style cards, and mixed folders get All / Photos / Videos filters.
+- Grid and list views, sorting, and light and dark themes. Browser preferences are remembered.
+- Folder navigation without a full page reload. Direct folder URLs and browser refresh still work.
+- Original files are never moved, renamed, or reorganized.
 
----
+### Video player
 
-## Highlights
+- Seeking, playback speed, volume, fullscreen, zoom, and pan.
+- Audio-track and subtitle-track selection when the required media tools are available.
+- Load external <code>.srt</code> subtitle files.
+- Keyboard shortcuts (see below).
 
-### Personal media library
+### Posters and previews
 
-- Browse media directly from a folder selected at server startup.
-- Navigate into folders and return to parent directories.
-- Open a folder URL directly or refresh the browser without losing the current location.
-- Keep the original directory structure and media files unchanged.
-- View the library through a responsive browser interface.
-
-### Adaptive folder presentation
-
-Streamly classifies folders using the media found inside them rather than relying only on folder names.
-
-| Folder contents | Presentation mode |
-| --- | --- |
-| Videos | Video-library view |
-| Photos | Photo and album-oriented view |
-| Photos and videos | Mixed view with All, Photos, and Videos filters |
-| No photos or videos detected | Collections view |
-
-Each folder is classified independently when opened. A photo album inside a video collection, or a video folder inside a photo collection, can therefore use its own appropriate presentation.
-
-Folder discovery is bounded and briefly cached to keep scans manageable on large media directories.
-
-### Video posters and previews
-
-- Generate and cache poster artwork for supported video collections.
-- Search for alternative poster candidates and select artwork for a video.
-- Generate video preview frames where supported.
-- Use local artwork when available.
-- Use TMDB as the configured poster source, with Wikipedia as the fallback source.
-- Keep generated artwork and indexes in the server cache rather than mixing them with original media.
-
-### Photo browsing
-
-- Generate cached photo thumbnails.
-- Generate photo previews when supported.
-- Support common image formats handled by the server and installed image libraries.
-- Use Pillow when available for image processing; HEIC/HEIF support can be enabled with pillow-heif.
-
-### Media playback
-
-- Stream media files over HTTP.
-- Support HTTP byte ranges for seeking and resuming video playback.
-- Read available audio and subtitle track information.
-- Serve subtitle tracks as WebVTT.
-- Prepare extracted audio tracks for playback when the required media tools are available.
-
-### Interface and interaction
-
-- Next.js and React frontend styled with Tailwind CSS.
-- Feature-oriented frontend organization for the library, player, posters, viewer, and theme.
-- Zustand stores for shared library and player preferences.
-- Dedicated ViewModels for filtering, sorting, poster workflows, image navigation, keyboard shortcuts, pointer gestures, zoom, and playback progress.
-- Dark and light theme tokens.
-- Responsive layouts for desktop, tablet, and phone-sized screens.
-
-### Server visibility
-
-- Colored request logs with request, response, completion, abort, and error states.
-- Session totals for requests, bytes sent, aborted transfers, and errors.
-- Device-family labels inferred from the browser user-agent.
-- Local-network access restrictions enabled by default.
-
----
-
-## How Streamly works
-
-Streamly has two main parts:
-
-1. **Python server** — selects and shares the media directory, handles HTTP requests, scans folders, serves media bytes, manages media-related API operations, and coordinates generated cache files.
-2. **Web interface** — a Next.js and React application that presents the library and provides browsing and playback interactions.
-
-The Python server starts the web interface in development mode by default. In production mode, it serves a static Next.js export from web/out/.
-
-The browser accesses the application through the Python server. The web interface is mounted under /__ui/, while library and media operations are handled by the Python server.
-
----
-
-## Technology stack
-
-| Area | Technology |
-| --- | --- |
-| Backend | Python standard library |
-| HTTP server | http.server, ThreadingHTTPServer |
-| Frontend framework | Next.js 15 |
-| UI library | React 18 |
-| Language | TypeScript |
-| Styling | Tailwind CSS 4 |
-| State management | Zustand |
-| Frontend utilities | clsx, tailwind-merge, class-variance-authority |
-| Image processing | Pillow (optional) |
-| HEIC / HEIF image support | pillow-heif (optional) |
-| Video and audio processing | FFmpeg and FFprobe (optional, recommended) |
-| Poster metadata source | TMDB, with Wikipedia fallback |
-
-The backend uses Python's standard library for its HTTP server and core application flow. Image and media-processing packages are optional enhancements rather than requirements for starting the Python application.
-
----
+- Videos inside folders named <code>Videos</code> or <code>Vedios</code> can get movie/show posters from TMDB (with an API key) or Wikipedia (without one). You can choose another poster through the in-app search.
+- Videos inside folders named <code>Photos</code> can get a preview frame, generated by FFmpeg or captured by the browser when FFmpeg is unavailable.
+- Photo thumbnails and smaller viewer copies are generated on first use and cached.
 
 ## Requirements
 
-### Required
-
-- Python 3.8 or newer.
-- Node.js and npm.
-- A browser on the device used to access Streamly.
-- A directory containing the media you want to share.
-
-### Optional tools
-
-| Tool | Purpose |
+| Needed for | Requirement |
 | --- | --- |
-| FFmpeg | Video preview extraction and media processing |
-| FFprobe | Media stream and track inspection |
-| Pillow | Faster photo thumbnail processing |
-| pillow-heif | HEIC / HEIF image decoding |
-| TMDB API key | Poster lookup through TMDB |
+| Running the server | Python 3.8+ |
+| Web UI | Node.js and npm (the server installs frontend dependencies and runs the UI for you) |
+| Audio/subtitle tracks and video preview frames | <code>ffmpeg</code> and <code>ffprobe</code> on your <code>PATH</code> (optional) |
+| Photo thumbnails and WebP output | <code>pip install Pillow</code> (optional) |
+| iPhone/Android HEIC photos | <code>pip install pillow-heif</code> (optional) |
+| Better poster coverage | A free [TMDB API key](https://www.themoviedb.org/settings/api) (optional) |
 
-Install optional Python image packages from the project root when needed:
+## Quick start (Windows PowerShell)
 
-~~~bash
-python -m pip install Pillow pillow-heif
-~~~
+Run from the repository root — the folder containing <code>server.py</code>:
 
-Install FFmpeg separately and make sure both ffmpeg and ffprobe are available on your system PATH.
-
----
-
-## Quick start
-
-### 1. Clone the repository
-
-~~~bash
-git clone https://github.com/Karthik1772/Media_Server.git
-cd Media_Server
-~~~
-
-### 2. Install frontend dependencies
-
-~~~bash
-cd web
-npm ci
-cd ..
-~~~
-
-### 3. Start Streamly
-
-~~~bash
+~~~powershell
 python server.py
 ~~~
 
-By default, Streamly shares the directory one level above the project directory. The server starts the Next.js development interface and prints the local and network addresses in the terminal.
+By default, Streamly shares the folder **above** the repository folder. For example, with <code>E:\Streamly\server.py</code>, it shares <code>E:\</code>.
 
-Open the printed local address in a browser. To access Streamly from another device on the same network, open the printed network address on that device.
+To share a specific folder, pass it as the first argument:
 
-### 4. Select a different media directory
-
-Pass the directory you want to share as the first argument:
-
-~~~bash
-python server.py "E:\Movies"
+~~~powershell
+python server.py "D:\Movies"
 ~~~
 
-Another example:
+On first start, the server installs the web dependencies if needed, starts the Next.js development server, and prints the addresses to open:
 
-~~~bash
-python server.py "E:\Photos"
+- <code>http://localhost:2904</code> on the same PC.
+- The **Phone** URL shown in the console banner on another device connected to the same Wi-Fi.
+
+Press <code>Ctrl+C</code> to stop the server.
+
+### Production build
+
+~~~powershell
+python server.py --prod
 ~~~
 
-The supplied directory becomes the media root for that server session. The original media files are not moved or renamed.
-
-### 5. Stop the server
-
-Press Ctrl+C in the terminal running Streamly.
-
----
+This serves the static Next.js export instead of the live development server. The server builds it automatically if <code>web/out/</code> is missing or out of date.
 
 ## Configuration
 
-### Environment file
+The <code>.env</code> file is read from the repository root (next to <code>server.py</code>). Environment variables can also be set in the process environment.
 
-Streamly reads an optional .env file from the project root (the directory containing server.py).
+| Setting | Where to configure | Default |
+| --- | --- | --- |
+| Server port | <code>PORT</code> constant in <code>streamly_server/application.py</code> | <code>2904</code> |
+| Web UI dev-server port | <code>STREAMLY_UI_PORT</code> environment variable | <code>5173</code> (bound to <code>127.0.0.1</code>) |
+| UI mode | <code>--prod</code> / <code>--build</code> command-line flag | Development mode |
+| Shared folder | First command-line argument or <code>MEDIA_ROOT</code> constant in <code>streamly_server/application.py</code> | Parent of the repository folder |
+| TMDB key | <code>TMDB_API_KEY</code> in <code>.env</code> | None (Wikipedia is used) |
+| Poster folder names | <code>POSTER_FOLDERS</code> constant in <code>streamly_server/application.py</code> | <code>Videos</code>, <code>Vedios</code> |
+| Preview folder names | <code>PREVIEW_FOLDERS</code> constant in <code>streamly_server/application.py</code> | <code>Photos</code> |
+| Preview size limit | <code>PREVIEW_MAX_MB</code> constant in <code>streamly_server/application.py</code> | <code>500</code> |
+| Audio cache limit | <code>AUDIO_CACHE_MAX_GB</code> constant in <code>streamly_server/application.py</code> | <code>5</code> |
+| Additional allowed networks | <code>EXTRA_ALLOWED_NETWORKS</code> constant in <code>streamly_server/application.py</code> | None |
 
-Create a file named .env:
+The values listed as constants are changed in the Python source; they are not <code>.env</code> variables.
+
+Example <code>.env</code>:
 
 ~~~env
-TMDB_API_KEY=your_tmdb_api_key
+TMDB_API_KEY=your_key_here
 ~~~
 
-The TMDB key is optional. Without it, the application uses its configured Wikipedia poster fallback.
+Do not commit this file or publish your API key.
 
-Environment variables already defined in the process take precedence over values in the .env file.
+## Keyboard shortcuts (player)
 
-### Available settings
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| TMDB_API_KEY | Empty | Optional key used for TMDB poster lookup |
-| STREAMLY_UI_PORT | 5173 | Local port used by the Next.js development server |
-| STREAMLY_UI | Development mode | Set to build to use the production UI build |
-
-### Startup options
-
-| Command | Description |
+| Key | Action |
 | --- | --- |
-| python server.py | Start in development mode |
-| python server.py "E:\Media" | Start in development mode with a selected media root |
-| python server.py --prod | Build the frontend if needed and serve the production export |
-| python server.py --build | Same production-build mode |
-| python server.py --dev | Explicitly use development mode |
+| <code>Space</code> / <code>K</code> | Play / pause |
+| <code>←</code> / <code>→</code> | Seek 10 seconds back / forward |
+| <code>↑</code> / <code>↓</code> | Volume up / down |
+| <code>M</code> | Mute |
+| <code>F</code> | Fullscreen |
+| <code>N</code> / <code>P</code> | Next / previous video |
+| <code>+</code> / <code>-</code> / <code>0</code> | Zoom in / out / reset |
+| <code>C</code> | Cycle subtitles |
+| <code>A</code> | Cycle audio track |
+| <code>,</code> / <code>.</code> (or <code>&lt;</code> / <code>&gt;</code>) | Slower / faster |
+| <code>Esc</code> | Close the player |
 
-The media directory can be combined with a mode flag:
-
-~~~bash
-python server.py "E:\Media" --prod
-~~~
-
----
-
-## Media organization and folder views
-
-Streamly reads the selected media directory in place. It does not require a specific folder hierarchy, but folders named Vedios or Videos are used by the poster feature as video-poster scopes, and folders named Photos are used as photo-preview scopes.
-
-Example media directory:
-
-~~~text
-Media/
-├── Vedios/
-│   ├── Movies/
-│   │   ├── Movie One (2024).mkv
-│   │   └── Movie Two (2023).mp4
-│   └── Web Series/
-│       └── Series Name/
-│           └── Season 01/
-│               └── Series Name S01E01.mkv
-│
-└── Photos/
-    ├── Trips/
-    │   ├── Trip One/
-    │   └── Trip Two/
-    └── Family/
-~~~
-
-This is only an example. Streamly can browse other directory layouts too.
-
-### Folder classification
-
-The library scanner counts photos, videos, audio, other files, and subfolders. It uses the discovered photo and video counts to choose a folder presentation.
-
-- A folder containing both photos and videos is classified as mixed.
-- A folder containing videos but no photos is classified as video.
-- A folder containing photos but no videos is classified as photo.
-- A folder with neither photos nor videos is classified as a collection.
-
-The scanner uses bounded recursive discovery, a short-lived in-memory cache, and does not follow directory symlinks during recursive classification.
-
----
-
-## Posters, thumbnails, and cache
-
-Generated media data is kept separately from the original media library.
-
-The canonical poster and media-cache implementation is:
-
-~~~text
-streamly_server/posters.py
-~~~
-
-The cache is organized under a single cache/ directory beside the server application. It stores generated poster artwork, video previews, photo thumbnails, photo previews, subtitle data, extracted audio, and their indexes.
-
-Legacy cache directories are migrated into the centralized cache location when the server initializes. The migration is designed not to overwrite files already present at the destination.
-
-### Poster lookup
-
-The application can use TMDB for poster discovery when TMDB_API_KEY is configured. Wikipedia is used as the fallback source. Poster image retrieval is restricted in the implementation to its configured image hosts.
-
-### Video and photo previews
-
-- Video preview frames are generated for supported media in the configured preview scope.
-- The current preview scope is folders named Photos.
-- The configured maximum video size for preview extraction is 500 MB.
-- Photo thumbnails and previews are generated and cached on demand or by the background media workflow, depending on the operation.
-
-### Cache notes
-
-- Cache files are generated data, not replacements for original media.
-- Cache URLs use dedicated prefixes served by the Python application.
-- The audio cache has a configured maximum size of 5 GB, with older extracted files eligible for pruning.
-- Hidden and cache directories are excluded from normal library browsing.
-
----
-
-## Playback capabilities
-
-### HTTP streaming and seeking
-
-The Python server supports HTTP Range requests for files. This allows compatible browser media players to request specific byte ranges instead of downloading an entire video before seeking.
-
-### Audio and subtitle tracks
-
-The playback service exposes track information and delegates media probing and extraction to the shared media engine.
-
-- Track metadata is available through the tracks API.
-- Subtitle content is served in WebVTT format.
-- Audio tracks can be prepared for playback through the audio preparation API.
-
-Actual codec support depends on the browser and the media tools available on the host computer.
-
----
-
-## HTTP API
-
-The API is served by the Python application under /__api/.
-
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| GET | /__api/library?path=/ | Retrieve library data for a folder |
-| GET | /__api/poster-search?q=... | Search for poster candidates |
-| POST | /__api/poster-select | Apply a poster action to a video |
-| GET | /__api/photo-thumb?key=... | Generate or retrieve a photo thumbnail |
-| POST | /__api/thumb?key=... | Save a browser-captured video thumbnail |
-| GET | /__api/tracks?key=... | Retrieve audio and subtitle track information |
-| GET | /__api/subtitle?key=...&id=... | Retrieve a subtitle track as WebVTT |
-| GET | /__api/audio-prepare?key=...&a=... | Prepare an extracted audio track |
-
-### API behavior
-
-- Library paths are resolved inside the configured media root.
-- Invalid or missing folders return an error response.
-- Media keys are normalized and validated by the media service before file operations.
-- API responses use JSON where appropriate; subtitle responses use text/vtt.
-- The poster-selection and browser-thumbnail operations use POST requests.
-
-These endpoints are application interfaces used by the frontend; they are not intended as a public internet API.
-
----
-
-## Project structure
-
-The following tree highlights the main source areas and their responsibilities. It is not an exhaustive listing of every frontend component.
+## Project layout
 
 ~~~text
 Media_Server/
-│
-├── server.py
-│   └── Single-command Python entry point
-│
+├── server.py                 # Launcher: python server.py
 ├── streamly_server/
-│   ├── application.py
-│   │   └── HTTP handling, server lifecycle, routing and startup
-│   │
-│   ├── posters.py
-│   │   └── Canonical poster, thumbnail, preview and media-cache engine
-│   │
+│   ├── application.py        # HTTP server, routing, startup and access checks
+│   ├── posters.py            # Posters, thumbnails, previews and media cache
 │   ├── features/
-│   │   ├── library/
-│   │   │   └── service.py
-│   │   │       └── Folder scanning and adaptive media classification
-│   │   │
-│   │   └── playback/
-│   │       └── service.py
-│   │           └── Audio and subtitle playback operations
-│   │
+│   │   ├── library/           # Folder scanning and media classification
+│   │   └── playback/          # Audio and subtitle operations
 │   └── shared/
-│       └── cache/
-│           └── Cache migration helpers
-│
-├── web/
-│   ├── src/
-│   │   └── Frontend application and feature modules
-│   ├── package.json
-│   ├── package-lock.json
-│   ├── next.config.js
-│   ├── postcss.config.js
-│   └── tsconfig.json
-│
-├── tests/
-│   └── Backend regression tests
-│
-├── cache/
-│   └── Generated server-side cache data
-│
-├── .env
-└── README.md
+│       └── cache/             # Cache migration helpers (Python package)
+├── web/                      # Next.js frontend
+├── tests/                    # Backend unit tests
+└── cache/                    # Generated at runtime; git-ignored
 ~~~
 
-### Backend responsibilities
+The canonical media/poster implementation is <code>streamly_server/posters.py</code>. Cache migration helpers live in <code>streamly_server/shared/cache/</code>. The root <code>cache/</code> directory is generated runtime data; it must not be confused with the Python package under <code>streamly_server/shared/cache/</code>.
 
-| File or directory | Responsibility |
-| --- | --- |
-| server.py | Public launcher; delegates to the application module |
-| streamly_server/application.py | HTTP request handling, routing, startup, network checks, and server lifecycle |
-| streamly_server/posters.py | Canonical poster, thumbnail, preview, subtitle, audio extraction, and cache implementation |
-| streamly_server/features/library/service.py | Folder listing and adaptive media classification |
-| streamly_server/features/playback/service.py | Playback-facing audio and subtitle service boundary |
-| streamly_server/shared/cache/ | Legacy cache migration helpers |
+## HTTP API
 
-The playback service delegates to the shared media engine rather than maintaining a second implementation. The poster/media engine is located at streamly_server/posters.py; there is no separate root-level posters.py implementation.
+All API endpoints live under <code>/__api/</code>.
 
----
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | <code>/__api/library?path=</code> | Folder listing for client-side navigation |
+| GET | <code>/__api/poster-search</code> | Search poster candidates (<code>q</code>, <code>year</code>, <code>kind</code>) |
+| POST | <code>/__api/poster-select</code> | Choose or reset a poster |
+| GET | <code>/__api/photo-thumb</code> | Photo thumbnail or viewer copy, created on first request |
+| POST | <code>/__api/thumb</code> | Save a preview frame captured by the browser |
+| GET | <code>/__api/tracks</code> | Audio and subtitle tracks for a video |
+| GET | <code>/__api/subtitle</code> | One subtitle track as WebVTT |
+| GET | <code>/__api/audio-prepare</code> | Extract one audio track for playback |
 
-## Development and verification
+The web UI itself is served under <code>/__ui/</code>.
 
-### Frontend development
+## Development
 
-From the web/ directory:
+### Backend checks
 
-~~~bash
-npm ci
-npm run dev
+Run from the repository root:
+
+~~~powershell
+python -m unittest discover -s tests -v
+python -m py_compile server.py streamly_server/application.py streamly_server/posters.py streamly_server/features/*/*.py streamly_server/shared/cache/*.py
 ~~~
-
-The Python application normally starts the frontend development server for you when you run python server.py. Running the frontend separately is useful when working directly on the UI.
 
 ### Frontend checks
 
-Run from web/:
+Run from <code>web/</code>:
 
-~~~bash
+~~~powershell
+npm ci
 npm run typecheck
 npm run build
 ~~~
 
-The available package scripts are:
+For a complete manual check, start Streamly on the computer that holds your media and verify folder navigation, browser refresh, photo/video views, poster selection, seeking, and available audio/subtitle tracks.
 
-| Script | Description |
-| --- | --- |
-| npm run dev | Start the Next.js development server |
-| npm run build | Build the static frontend export |
-| npm run typecheck | Run TypeScript type checking |
+## Security notes
 
-The Next.js configuration uses static export, the /__ui base path, trailing slashes, and unoptimized images to match the Python server's UI-serving behavior.
-
-### Backend tests
-
-Run from the repository root:
-
-~~~bash
-python -m unittest discover -s tests -v
-~~~
-
-The backend regression coverage includes adaptive folder classification, bounded scans, symlink handling, and safe cache migration.
-
-### Python syntax check
-
-Run from the repository root:
-
-~~~bash
-python -m py_compile server.py streamly_server/application.py streamly_server/posters.py streamly_server/features/*/*.py streamly_server/shared/cache/*.py
-~~~
-
-### Full verification
-
-Before considering a change ready:
-
-1. Run the backend test suite.
-2. Run the Python syntax check.
-3. Run npm ci in web/.
-4. Run npm run typecheck and npm run build in web/.
-5. Start Streamly on the machine containing the media library.
-6. Manually verify folder navigation, browser refresh, photo and video views, poster behavior, seeking, and available audio/subtitle tracks.
-
----
-
-## Network access and safety
-
-Streamly binds its HTTP server on all network interfaces so devices on the local network can connect. However, the application also checks the connecting client address.
-
-**Local-network-only access is enabled by default.** The server accepts loopback, private-network, and link-local addresses. Other addresses are refused. This is intended for use on a trusted home, office, or hotspot network—not as an internet-facing media hosting service.
-
-Additional allowed networks can be configured in the Python application through EXTRA_ALLOWED_NETWORKS. Do this only when you understand the network exposure it creates.
-
-Important considerations:
-
-- Run Streamly only on networks you trust.
-- The shared media directory is accessible to devices that can connect and pass the server's network check.
-- Do not expose the server directly to the public internet.
-- A TMDB API key belongs in your local .env file; do not commit real credentials.
-- Keep generated caches and private media out of public repositories.
-
----
+- By default, only this PC and private/link-local network addresses can connect. Public internet addresses are refused.
+- <code>/__api/library</code> resolves requested paths inside the shared folder and refuses paths outside it.
+- Directory symlinks are not followed during recursive folder classification.
+- The server has no login or user authentication. Anyone on an allowed network may be able to browse the shared media.
+- Do not port-forward this server or expose it directly to the public internet.
+- Allow Python through Windows Firewall only on networks you trust.
 
 ## Troubleshooting
 
-### The web interface does not start
-
-- Confirm Node.js and npm are installed.
-- Run npm ci from the web/ directory.
-- Check the frontend startup output and web/.next-dev.log.
-- Confirm the configured UI port is not occupied. The default is 5173; it can be changed with STREAMLY_UI_PORT.
-
-### The production UI is missing or outdated
-
-Run:
-
-~~~bash
-python server.py --prod
-~~~
-
-Production mode builds the static frontend export when it is missing or older than the frontend source.
-
-### A media folder is not opening
-
-- Confirm the selected media root exists.
-- Confirm the server process has permission to read the folder.
-- Check that the requested folder is inside the selected media root.
-- Check the terminal output for request errors.
-
-### Posters are not appearing
-
-- Confirm the media is inside a configured poster scope, currently Vedios or Videos.
-- Configure TMDB_API_KEY if you want TMDB poster lookup.
-- Check that the host has an internet connection for remote poster sources.
-- Remember that poster lookup and artwork generation may take time.
-
-### Video previews or photo thumbnails are unavailable
-
-- Install FFmpeg and FFprobe and make sure they are on PATH.
-- Install Pillow for image-processing support.
-- Install pillow-heif if you need HEIC/HEIF image decoding.
-- Check that the media file is readable and uses a supported format.
-
-### A device on the network cannot connect
-
-- Make sure both devices are connected to the same local network.
-- Open the network URL printed by Streamly, not the localhost URL.
-- Check the host computer's firewall rules.
-- Remember that non-private/public client addresses are refused by default.
-
----
-
-## License
-
-No license information is currently specified in this repository. If you intend to distribute or reuse this project, add an explicit license file and update this section.
+- **<code>ModuleNotFoundError: No module named 'streamly_server.shared'</code>:** The <code>streamly_server/shared/cache/</code> source package may be missing from the checkout. Check that <code>.gitignore</code> uses <code>/cache/</code> (root only), not <code>cache/</code>, which can also match and ignore the Python package directory.
+- **"Node.js (npm) was not found":** Install Node.js from [nodejs.org](https://nodejs.org), then run <code>python server.py</code> again.
+- **No audio/subtitle menu or no video preview frames:** Install FFmpeg and make sure both <code>ffmpeg</code> and <code>ffprobe</code> are on your <code>PATH</code>.
+- **Posters are missing:** Check that the video is inside a folder named <code>Videos</code> or <code>Vedios</code>, and that the PC has internet access. Add a TMDB API key for TMDB poster search; Wikipedia is the fallback.
+- **Phone cannot connect:** Use the **Phone** URL from the console banner, keep both devices on the same Wi-Fi, and allow Python through Windows Firewall.
